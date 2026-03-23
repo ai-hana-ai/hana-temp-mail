@@ -1,0 +1,11 @@
+name = "hana-temp-mail"
+main = "src/index.ts"
+compatibility_date = "2024-03-23"
+
+[vars]
+MAIL_DOMAIN = "adopsee.com"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "temp-mail-db"
+database_id = "32a578d6-1dd8-430f-bba5-577f3d96f63b"

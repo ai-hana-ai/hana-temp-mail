@@ -1,0 +1,21 @@
+{
+  "name": "hana-temp-mail",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.28.2",
+  "devDependencies": {
+    "wrangler": "^4.76.0"
+  },
+  "dependencies": {
+    "hono": "^4.12.9",
+    "postal-mime": "^2.7.4",
+    "zod": "^4.3.6"
+  }
+}

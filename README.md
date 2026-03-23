@@ -46,6 +46,23 @@ pnpm wrangler dev
 pnpm wrangler deploy
 ```
 
+## Cloudflare Email Routing Setup (Required)
+
+To receive incoming emails (e.g. `hana@adopsee.com`) you must configure Email Routing to your Worker.
+
+1. Open Cloudflare Dashboard for `adopsee.com`
+2. Go to **Email → Email Routing**
+3. In **Routes**, create/update a catch-all rule:
+   - **Matcher:** `all`
+   - **Action:** `Send to Worker`
+   - **Worker:** `hana-temp-mail`
+   - **Enabled:** `ON`
+4. Save changes
+
+Also ensure DNS has valid records for domain resolution and mail delivery:
+- MX: `route1/2/3.mx.cloudflare.net`
+- A/AAAA: resolvable for `adopsee.com`
+
 ## API Endpoints
 
 - `GET /api/mailbox/random`

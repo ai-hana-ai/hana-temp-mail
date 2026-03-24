@@ -413,13 +413,14 @@ export function HomePage({ mailDomain }: HomePageProps) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta
           http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
         />
+        <style dangerouslySetInnerHTML={{ __html: `[x-cloak] { display: none !important; }` }} />
         <title>Temporary Mail Inbox</title>
         <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js" integrity="sha384-9Ax3MmS9AClxJyd5/zafcXXjxmwFhZCdsT6HJoJjarvCaAkJlk5QDzjLJm+Wdx5F" crossorigin="anonymous"></script>
         <style dangerouslySetInnerHTML={{ __html: css }} />
       </head>
-      <body x-data="mailApp()" x-init="init()">
+      <body x-data="mailApp()" x-init="init()" x-cloak>
         <div dangerouslySetInnerHTML={{ __html: appHtml }} />
         <script dangerouslySetInnerHTML={{ __html: appScript }} />
       </body>

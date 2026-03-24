@@ -2,10 +2,15 @@ name = "hana-temp-mail"
 main = "src/index.ts"
 compatibility_date = "2024-03-23"
 
+# Configure these via Cloudflare dashboard or environment variables
+# DO NOT commit database_id to public repo
 [vars]
-MAIL_DOMAIN = "adopsee.com"
+# MAIL_DOMAIN = "your-domain.com"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "temp-mail-db"
-database_id = "32a578d6-1dd8-430f-bba5-577f3d96f63b"
+# database_id = "YOUR_DATABASE_ID"  # Configure in dashboard or .env
+
+[triggers]
+crons = ["0 * * * *"]

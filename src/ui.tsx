@@ -1,11 +1,14 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
 
+import { mailboxLocalPartPattern } from './validation';
+
 type HomePageProps = {
   mailDomain: string;
 };
 
 export function HomePage({ mailDomain }: HomePageProps) {
+  const mailboxLocalPartRegexSource = mailboxLocalPartPattern.source;
   const appHtml = `
     <div class="hero">
       <div class="hero-badge">🌸 Hana Mail Workspace</div>
@@ -58,7 +61,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
         <hr style="border:0;border-top:1px solid #eee;" />
 
         <template x-if="selected && selectedIsHtml">
-          <iframe id="email-html-frame" sandbox="allow-popups allow-popups-to-escape-sandbox" style="width:100%;min-height:420px;border:1px solid #eee;border-radius:10px;background:#fff;"></iframe>
+          <iframe id="email-html-frame" sandbox="allow-popups" referrerpolicy="no-referrer" style="width:100%;min-height:420px;border:1px solid #eee;border-radius:10px;background:#fff;"></iframe>
         </template>
         <template x-if="selected && !selectedIsHtml">
           <pre class="text-body" x-text="selectedPlainText || '(No message body)'"></pre>
@@ -90,7 +93,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
           const val = (v || '').trim().toLowerCase();
           if (!val) return null;
           if (val.includes('@')) return null;
-          if (!/^[a-z0-9._-]+$/.test(val)) return null;
+          if (!(new RegExp(${JSON.stringify(mailboxLocalPartRegexSource)})).test(val)) return null;
           return val;
         },
 
@@ -117,6 +120,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
         stripHtml(html) {
           return (html || '')
+            .replace(/<!--[\\s\\S]*?-->/g, ' ')
             .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
             .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
             .replace(/<[^>]+>/g, ' ')
@@ -152,8 +156,95 @@ export function HomePage({ mailDomain }: HomePageProps) {
         },
 
         previewText(email) {
-          const base = this.getPlainTextBody(email) || (email?.body_html ? 'HTML email content' : 'No preview');
+          const base = (email?.preview || '').trim() || 'No preview available';
           return base.length > 120 ? (base.slice(0, 120) + '...') : base;
+        },
+
+        getErrorMessage(payload, fallback) {
+          if (payload && typeof payload.error === 'string') return payload.error;
+          if (payload && payload.error && typeof payload.error.message === 'string') return payload.error.message;
+          return fallback;
+        },
+
+        sanitizeEmailHtml(html) {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html || '', 'text/html');
+          const blockedTags = ['script', 'iframe', 'object', 'embed', 'base', 'form', 'input', 'button', 'select', 'option', 'textarea', 'link', 'meta'];
+          blockedTags.forEach((tag) => {
+            doc.querySelectorAll(tag).forEach((node) => node.remove());
+          });
+
+          const allowedProtocols = ['http:', 'https:', 'mailto:', 'cid:', 'data:'];
+          const urlAttributes = ['href', 'src', 'poster', 'action', 'formaction'];
+
+          doc.querySelectorAll('*').forEach((node) => {
+            for (const attr of Array.from(node.attributes)) {
+              const name = attr.name.toLowerCase();
+              const value = attr.value.trim();
+
+              if (name.startsWith('on') || name === 'srcdoc') {
+                node.removeAttribute(attr.name);
+                continue;
+              }
+
+              if (name === 'style' && /expression|url\\s*\\(/i.test(value)) {
+                node.removeAttribute(attr.name);
+                continue;
+              }
+
+              if (name === 'target') {
+                node.setAttribute('target', '_blank');
+                continue;
+              }
+
+              if (urlAttributes.includes(name)) {
+                if (!value) continue;
+
+                try {
+                  const parsed = new URL(value, 'https://mail.invalid');
+                  if (!allowedProtocols.includes(parsed.protocol)) {
+                    node.removeAttribute(attr.name);
+                  }
+                } catch {
+                  node.removeAttribute(attr.name);
+                }
+              }
+            }
+
+            if (node.tagName === 'A') {
+              node.setAttribute('rel', 'noopener noreferrer');
+              node.setAttribute('target', '_blank');
+            }
+          });
+
+          return doc.body.innerHTML.trim();
+        },
+
+        buildHtmlDocument(emailHtml) {
+          const sanitized = this.sanitizeEmailHtml(emailHtml);
+          const body = sanitized || '<p style="font-family: ui-sans-serif, system-ui, sans-serif; color: #475467;">HTML body was empty after sanitization.</p>';
+          return [
+            '<!DOCTYPE html>',
+            '<html lang="en">',
+            '<head>',
+            '<meta charset="utf-8">',
+            '<meta http-equiv="Content-Security-Policy" content="default-src \\'none\\'; img-src data: http: https: cid:; media-src data: http: https:; style-src \\'unsafe-inline\\'; font-src data: http: https:; frame-src http: https:; connect-src \\'none\\'; script-src \\'none\\'; base-uri \\'none\\'; form-action \\'none\\'">',
+            '<meta name="referrer" content="no-referrer">',
+            '<base target="_blank">',
+            '<style>html,body{margin:0;padding:0;background:#fff;color:#111827}body{padding:16px;font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}img{max-width:100%;height:auto}pre{white-space:pre-wrap;word-break:break-word}</style>',
+            '</head>',
+            '<body>',
+            body,
+            '</body>',
+            '</html>',
+          ].join('');
+        },
+
+        renderSelectedHtml(emailHtml) {
+          const frame = document.getElementById('email-html-frame');
+          if (frame) {
+            frame.setAttribute('srcdoc', this.buildHtmlDocument(emailHtml));
+          }
         },
 
         async init() {
@@ -166,10 +257,11 @@ export function HomePage({ mailDomain }: HomePageProps) {
           try {
             const res = await fetch('/api/mailbox/random');
             const data = await res.json();
+            if (!res.ok) throw new Error(this.getErrorMessage(data, 'Failed to generate random inbox.'));
             this.localPart = (data.mailbox || '').split('@')[0] || '';
             this.status = 'Random inbox ready. Click "Open Inbox" to start monitoring.';
-          } catch {
-            this.status = 'Failed to generate random inbox. Please retry.';
+          } catch (error) {
+            this.status = error instanceof Error ? error.message : 'Failed to generate random inbox. Please retry.';
           } finally {
             this.diceRolling = false;
           }
@@ -191,16 +283,21 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
         async loadEmails() {
           if (!this.activeMailbox) return;
-          const res = await fetch('/api/emails?to=' + encodeURIComponent(this.activeMailbox));
-          const data = await res.json();
-          this.emails = Array.isArray(data) ? data : [];
+          try {
+            const res = await fetch('/api/emails?to=' + encodeURIComponent(this.activeMailbox));
+            const data = await res.json();
+            if (!res.ok) throw new Error(this.getErrorMessage(data, 'Failed to load emails.'));
+            this.emails = Array.isArray(data) ? data : [];
+          } catch (error) {
+            this.status = error instanceof Error ? error.message : 'Failed to load emails.';
+          }
         },
 
         async viewEmail(id) {
           if (!this.activeMailbox) return;
           const res = await fetch('/api/email/' + id + '?to=' + encodeURIComponent(this.activeMailbox));
           const e = await res.json();
-          if (e.error) return alert(e.error);
+          if (!res.ok) return alert(this.getErrorMessage(e, 'Failed to load email.'));
 
           this.selected = e;
           this.selectedPlainText = this.getPlainTextBody(e);
@@ -209,13 +306,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
           setTimeout(() => {
             if (this.selectedIsHtml) {
-              const frame = document.getElementById('email-html-frame');
-              if (frame && frame.contentWindow) {
-                const doc = frame.contentWindow.document;
-                doc.open();
-                doc.write('<base target="_blank">' + e.body_html);
-                doc.close();
-              }
+              this.renderSelectedHtml(e.body_html || '');
             }
           }, 0);
         },
@@ -225,6 +316,8 @@ export function HomePage({ mailDomain }: HomePageProps) {
           this.selected = null;
           this.selectedIsHtml = false;
           this.selectedPlainText = '';
+          const frame = document.getElementById('email-html-frame');
+          if (frame) frame.removeAttribute('srcdoc');
         },
 
         connectSSE() {
@@ -318,8 +411,12 @@ export function HomePage({ mailDomain }: HomePageProps) {
       <head>
         <meta charSet="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta
+          http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+        />
         <title>Temporary Mail Inbox</title>
-        <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+        <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js" integrity="sha384-9Ax3MmS9AClxJyd5/zafcXXjxmwFhZCdsT6HJoJjarvCaAkJlk5QDzjLJm+Wdx5F" crossorigin="anonymous"></script>
         <style dangerouslySetInnerHTML={{ __html: css }} />
       </head>
       <body x-data="mailApp()" x-init="init()">

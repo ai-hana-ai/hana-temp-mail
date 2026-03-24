@@ -1,33 +1,33 @@
-import { Hono } from 'hono';
+import { Context, Hono } from 'hono';
 import PostalMime from 'postal-mime';
 import { renderHomePage } from './ui.tsx';
+import { normalizeMailboxInput } from './validation';
 
 export interface Env {
   DB: D1Database;
   MAIL_DOMAIN?: string;
+  RETENTION_DAYS?: string;
+  RATE_LIMIT_WINDOW_MS?: string;
 }
 
 type Bindings = { Bindings: Env };
 
 const app = new Hono<Bindings>();
+const rateLimitState = new Map<string, { count: number; resetAt: number }>();
+
+const RATE_LIMITS = {
+  random: 24,
+  inboxList: 60,
+  emailDetail: 120,
+  stream: 12,
+} as const;
 
 function getMailDomain(env: Env): string {
   return (env.MAIL_DOMAIN || 'adopsee.com').trim().toLowerCase();
 }
 
 function normalizeMailbox(input: string | null, mailDomain: string): string | null {
-  if (!input) return null;
-  const value = input.trim().toLowerCase();
-  if (!value) return null;
-
-  if (value.includes('@')) {
-    const [local, domain] = value.split('@');
-    if (!local || !domain) return null;
-    if (domain !== mailDomain) return null;
-    return `${local}@${mailDomain}`;
-  }
-
-  return `${value}@${mailDomain}`;
+  return normalizeMailboxInput(input, mailDomain);
 }
 
 function randomLocalPart(length = 10): string {
@@ -41,6 +41,106 @@ function randomMailbox(mailDomain: string): string {
   return `${randomLocalPart()}@${mailDomain}`;
 }
 
+function jsonError(c: Context<Bindings>, status: number, code: string, message: string) {
+  return c.json({ error: message, code }, status);
+}
+
+function getRateLimitWindowMs(env: Env): number {
+  const raw = Number(env.RATE_LIMIT_WINDOW_MS || '');
+  if (Number.isFinite(raw) && raw >= 1000) return raw;
+  return 60_000;
+}
+
+function getClientIp(request: Request): string {
+  const cfIp = request.headers.get('CF-Connecting-IP');
+  if (cfIp) return cfIp;
+
+  const forwarded = request.headers.get('x-forwarded-for');
+  if (forwarded) return forwarded.split(',')[0]?.trim() || 'unknown';
+  return 'unknown';
+}
+
+function applyRateLimit(c: Context<Bindings>, bucket: keyof typeof RATE_LIMITS) {
+  const windowMs = getRateLimitWindowMs(c.env);
+  const limit = RATE_LIMITS[bucket];
+  const now = Date.now();
+  const ip = getClientIp(c.req.raw);
+  const key = `${bucket}:${ip}`;
+  const current = rateLimitState.get(key);
+
+  if (!current || current.resetAt <= now) {
+    rateLimitState.set(key, { count: 1, resetAt: now + windowMs });
+    return null;
+  }
+
+  current.count += 1;
+  if (current.count <= limit) return null;
+
+  const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+  c.header('Retry-After', String(retryAfterSeconds));
+  return jsonError(c, 429, 'rate_limited', 'Too many requests. Please retry shortly.');
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function stripHtml(value: string): string {
+  return decodeHtmlEntities(
+    value
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildPreview(bodyText: string, bodyHtml: string, maxLength = 140): string {
+  const source = (bodyText || '').trim() || stripHtml(bodyHtml || '');
+  if (!source) return 'No preview available';
+  return source.length > maxLength ? `${source.slice(0, maxLength).trimEnd()}...` : source;
+}
+
+function getRetentionDays(env: Env): number {
+  const raw = Number(env.RETENTION_DAYS || '');
+  if (Number.isFinite(raw) && raw >= 1 && raw <= 90) return Math.floor(raw);
+  return 7;
+}
+
+async function cleanupExpiredEmails(env: Env) {
+  try {
+    const result = await env.DB.prepare("DELETE FROM emails WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')").run();
+    console.log('cleanup.completed', { deleted: result.meta.changes, retentionDays: getRetentionDays(env) });
+  } catch (error) {
+    console.error('cleanup.failed', { error });
+    throw error;
+  }
+}
+
+app.use('/api/*', async (c, next) => {
+  const path = c.req.path;
+  const bucket: keyof typeof RATE_LIMITS =
+    path === '/api/mailbox/random'
+      ? 'random'
+      : path === '/api/stream'
+        ? 'stream'
+        : path.startsWith('/api/email/')
+          ? 'emailDetail'
+          : 'inboxList';
+
+  const limited = applyRateLimit(c, bucket);
+  if (limited) return limited;
+  await next();
+});
+
 app.get('/api/mailbox/random', (c) => {
   const mailDomain = getMailDomain(c.env);
   return c.json({ mailbox: randomMailbox(mailDomain), domain: mailDomain });
@@ -50,16 +150,21 @@ app.get('/api/emails', async (c) => {
   const mailDomain = getMailDomain(c.env);
   const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomain);
   if (!mailbox) {
-    return c.json({ error: `Query parameter \`to\` harus email @${mailDomain}.` }, 400);
+    return jsonError(c, 400, 'invalid_mailbox', `Query parameter \`to\` must be a valid mailbox for @${mailDomain}.`);
   }
 
-  const { results } = await c.env.DB.prepare(
-    'SELECT * FROM emails WHERE lower(id_to) = ? ORDER BY timestamp DESC LIMIT ?'
-  )
-    .bind(mailbox.toLowerCase(), 50)
-    .all();
+  try {
+    const { results } = await c.env.DB.prepare(
+      "SELECT id, id_from, subject, timestamp, COALESCE(preview, CASE WHEN trim(coalesce(body_text, '')) != '' THEN substr(trim(body_text), 1, 140) ELSE 'No preview available' END) AS preview FROM emails WHERE lower(id_to) = ? ORDER BY timestamp DESC LIMIT ?"
+    )
+      .bind(mailbox.toLowerCase(), 50)
+      .all();
 
-  return c.json(results);
+    return c.json(results);
+  } catch (error) {
+    console.error('api.emails.list_failed', { mailbox, error });
+    return jsonError(c, 500, 'db_error', 'Failed to load emails.');
+  }
 });
 
 app.get('/api/email/:id', async (c) => {
@@ -68,15 +173,20 @@ app.get('/api/email/:id', async (c) => {
   const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomain);
 
   if (!id || !mailbox) {
-    return c.json({ error: `Email id dan query parameter \`to\` (@${mailDomain}) wajib.` }, 400);
+    return jsonError(c, 400, 'invalid_request', `Email id and query parameter \`to\` (@${mailDomain}) are required.`);
   }
 
-  const email = await c.env.DB.prepare('SELECT * FROM emails WHERE id = ? AND lower(id_to) = ?')
-    .bind(id, mailbox.toLowerCase())
-    .first();
+  try {
+    const email = await c.env.DB.prepare('SELECT * FROM emails WHERE id = ? AND lower(id_to) = ?')
+      .bind(id, mailbox.toLowerCase())
+      .first();
 
-  if (!email) return c.json({ error: 'Email not found.' }, 404);
-  return c.json(email);
+    if (!email) return jsonError(c, 404, 'not_found', 'Email not found.');
+    return c.json(email);
+  } catch (error) {
+    console.error('api.email.detail_failed', { mailbox, id, error });
+    return jsonError(c, 500, 'db_error', 'Failed to load email.');
+  }
 });
 
 app.get('/api/stream', async (c) => {
@@ -84,7 +194,7 @@ app.get('/api/stream', async (c) => {
   const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomain);
 
   if (!mailbox) {
-    return new Response(`Missing/invalid \`to\` query parameter. Use @${mailDomain}`, { status: 400 });
+    return jsonError(c, 400, 'invalid_mailbox', `Missing or invalid \`to\` query parameter. Use @${mailDomain}.`);
   }
 
   const stream = new ReadableStream({
@@ -120,8 +230,8 @@ app.get('/api/stream', async (c) => {
 
           await sleep(3000);
         }
-      } catch {
-        // ignore disconnect errors
+      } catch (error) {
+        console.error('api.stream.failed', { mailbox, error });
       } finally {
         closed = true;
         try {
@@ -150,26 +260,51 @@ app.get('/', (c) => {
 
 export default {
   fetch: app.fetch,
+  async scheduled(_controller: ScheduledController, env: Env) {
+    await cleanupExpiredEmails(env);
+  },
   async email(message: ForwardableEmailMessage, env: Env) {
     const mailDomain = getMailDomain(env);
     const normalizedTo = normalizeMailbox(message.to || '', mailDomain);
-    if (!normalizedTo) return;
+    if (!normalizedTo) {
+      console.warn('email.rejected.invalid_recipient', { to: message.to });
+      return;
+    }
 
     const parser = new PostalMime();
-    const rawEmail = await new Response(message.raw).arrayBuffer();
-    const email = await parser.parse(rawEmail);
+    let parsedEmail: Awaited<ReturnType<PostalMime['parse']>>;
 
-    await env.DB.prepare(
-      'INSERT INTO emails (id, id_to, id_from, subject, body_text, body_html) VALUES (?, ?, ?, ?, ?, ?)'
-    )
-      .bind(
-        crypto.randomUUID(),
-        normalizedTo,
-        message.from,
-        email.subject || '(No Subject)',
-        email.text || '',
-        email.html || ''
+    try {
+      const rawEmail = await new Response(message.raw).arrayBuffer();
+      parsedEmail = await parser.parse(rawEmail);
+      console.log('email.parsed', { to: normalizedTo, from: message.from, subject: parsedEmail.subject || '(No Subject)' });
+    } catch (error) {
+      console.error('email.parse_failed', { to: normalizedTo, error });
+      return;
+    }
+
+    const bodyText = parsedEmail.text || '';
+    const bodyHtml = typeof parsedEmail.html === 'string' ? parsedEmail.html : '';
+    const preview = buildPreview(bodyText, bodyHtml);
+
+    try {
+      await env.DB.prepare(
+        "INSERT INTO emails (id, id_to, id_from, subject, body_text, body_html, preview, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?))"
       )
-      .run();
+        .bind(
+          crypto.randomUUID(),
+          normalizedTo,
+          message.from,
+          parsedEmail.subject || '(No Subject)',
+          bodyText,
+          bodyHtml,
+          preview,
+          `+${getRetentionDays(env)} days`
+        )
+        .run();
+      console.log('email.stored', { to: normalizedTo, from: message.from });
+    } catch (error) {
+      console.error('email.store_failed', { to: normalizedTo, error });
+    }
   },
 };

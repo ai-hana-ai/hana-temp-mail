@@ -9,6 +9,7 @@ A temporary email inbox app built on **Cloudflare Workers** with:
 - **SSE** (real-time inbox updates)
 
 This project is domain-agnostic. You can use your own domain by setting `MAIL_DOMAIN`.
+All inboxes are public and unauthenticated by design. Anyone who knows a mailbox can read that inbox.
 
 ## Features
 
@@ -16,7 +17,9 @@ This project is domain-agnostic. You can use your own domain by setting `MAIL_DO
 - Fixed domain from environment variable (`MAIL_DOMAIN`)
 - Inbox appears only after user submits selected local-part
 - Real-time updates via SSE (`/api/stream`)
-- Email detail modal with HTML rendering (iframe) and text fallback
+- Email detail modal with sanitized HTML rendering (iframe) and text fallback
+- Metadata-only inbox list responses with precomputed previews
+- Automatic retention metadata plus scheduled cleanup support
 
 ---
 
@@ -41,7 +44,7 @@ pnpm install
 pnpm wrangler d1 create <your-db-name>
 ```
 
-Then copy the returned `database_id` into `wrangler.toml`:
+Then copy the returned `database_id` into a local deployment config or replace the placeholder values in `wrangler.toml` for your environment:
 
 ```toml
 [[d1_databases]]
@@ -58,7 +61,7 @@ pnpm wrangler d1 execute <your-db-name> --file=schema.sql
 
 ## 3) Configure Environment
 
-Set your inbox domain in `wrangler.toml`:
+Set your inbox domain in Cloudflare dashboard vars, `.dev.vars`, or `wrangler.toml`:
 
 ```toml
 [vars]
@@ -66,6 +69,12 @@ MAIL_DOMAIN = "example.com"
 ```
 
 > The UI only accepts local-part input (e.g. `alice`), and the app appends `@MAIL_DOMAIN` automatically.
+> Public API requests are rate-limited on a best-effort basis per client IP.
+
+Optional environment variables:
+
+- `RETENTION_DAYS` defaults to `7`
+- `RATE_LIMIT_WINDOW_MS` defaults to `60000`
 
 ## 4) Run Locally
 
@@ -77,6 +86,12 @@ pnpm wrangler dev
 
 ```bash
 pnpm wrangler deploy
+```
+
+If you keep `wrangler.toml` sanitized for reuse, create a local override file with your real D1 binding and vars, then deploy with:
+
+```bash
+pnpm wrangler deploy --config wrangler.local.toml
 ```
 
 ---
@@ -108,6 +123,8 @@ Also ensure DNS records for your domain are valid:
 - `GET /api/email/:id?to=<mailbox>`
 - `GET /api/stream?to=<mailbox>`
 
+`GET /api/emails` returns inbox metadata only: `id`, `id_from`, `subject`, `timestamp`, and `preview`.
+
 ---
 
 ## How It Works
@@ -117,6 +134,17 @@ Also ensure DNS records for your domain are valid:
 3. SSE subscribes to that mailbox
 4. Incoming emails are parsed and stored in D1
 5. Inbox updates in real-time
+6. Expired emails can be removed by the scheduled cleanup trigger
+
+## Retention
+
+The default retention window is 7 days. Each email stores an `expires_at` timestamp, and the Worker exposes an hourly scheduled cleanup hook (`wrangler` cron) that deletes expired rows.
+
+Apply the included migration before deploying this version to an existing database:
+
+```bash
+pnpm wrangler d1 execute <your-db-name> --file=./migrations/0001_preview_retention.sql --remote
+```
 
 ---
 

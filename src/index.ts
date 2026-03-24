@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import PostalMime from 'postal-mime';
-import { renderHomePage } from './ui';
+import { renderHomePage } from './ui.tsx';
 
 export interface Env {
   DB: D1Database;

@@ -34,10 +34,33 @@ export function HomePage({ mailDomain }: HomePageProps) {
           <span>Inbox: <b x-text="activeMailbox"></b></span>
           <span x-text="emails.length + ' message(s)'"></span>
         </div>
-        <template x-if="emails.length === 0">
-          <p style="text-align:center;">No emails yet for <b x-text="activeMailbox"></b>.</p>
+
+        <template x-if="isInboxLoading">
+          <div class="stack-sm">
+            <template x-for="n in skeletonItems" :key="'email-skeleton-' + n">
+              <div class="email-item email-skeleton" aria-hidden="true">
+                <div class="email-row">
+                  <div class="skeleton-line skeleton-subject"></div>
+                  <div class="skeleton-line skeleton-meta"></div>
+                </div>
+                <div class="skeleton-line skeleton-from"></div>
+                <div class="skeleton-line skeleton-snippet"></div>
+                <div class="skeleton-line skeleton-snippet short"></div>
+              </div>
+            </template>
+          </div>
         </template>
-        <template x-for="e in emails" :key="e.id">
+
+        <template x-if="!isInboxLoading && emails.length === 0">
+          <div class="empty-state">
+            <div class="empty-icon">✉️</div>
+            <div class="empty-copy">
+              <h3>Inbox masih kosong</h3>
+              <p>Belum ada email masuk ke <b x-text="activeMailbox"></b>. Bagikan alamat ini atau tunggu sebentar, inbox akan update otomatis saat pesan baru datang.</p>
+            </div>
+          </div>
+        </template>
+        <template x-for="e in visibleEmails" :key="e.id">
           <div class="email-item" @click="viewEmail(e.id)">
             <div class="email-row">
               <div class="subject" x-text="e.subject || '(No Subject)'"></div>
@@ -60,10 +83,20 @@ export function HomePage({ mailDomain }: HomePageProps) {
         <p class="meta" x-text="selected ? ('From: ' + selected.id_from + ' | To: ' + selected.id_to) : ''"></p>
         <hr style="border:0;border-top:1px solid #eee;" />
 
-        <template x-if="selected && selectedIsHtml">
+        <template x-if="isEmailLoading">
+          <div class="modal-skeleton" aria-hidden="true">
+            <div class="skeleton-line skeleton-heading"></div>
+            <div class="skeleton-line skeleton-meta wide"></div>
+            <div class="skeleton-block"></div>
+            <div class="skeleton-line skeleton-snippet"></div>
+            <div class="skeleton-line skeleton-snippet short"></div>
+          </div>
+        </template>
+
+        <template x-if="selected && !isEmailLoading && selectedIsHtml">
           <iframe id="email-html-frame" sandbox="allow-popups" referrerpolicy="no-referrer" style="width:100%;min-height:420px;border:1px solid #eee;border-radius:10px;background:#fff;"></iframe>
         </template>
-        <template x-if="selected && !selectedIsHtml">
+        <template x-if="selected && !isEmailLoading && !selectedIsHtml">
           <pre class="text-body" x-text="selectedPlainText || '(No message body)'"></pre>
         </template>
 
@@ -86,9 +119,16 @@ export function HomePage({ mailDomain }: HomePageProps) {
         selectedIsHtml: false,
         selectedPlainText: '',
         modalOpen: false,
+        isInboxLoading: false,
+        isEmailLoading: false,
         eventSource: null,
         beforeUnloadHandler: null,
         diceRolling: false,
+        skeletonItems: [1, 2, 3],
+
+        get visibleEmails() {
+          return this.isInboxLoading ? [] : this.emails;
+        },
 
         normalizeLocalPart(v) {
           const val = (v || '').trim().toLowerCase();
@@ -280,6 +320,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
         async loadEmails() {
           if (!this.activeMailbox) return;
+          this.isInboxLoading = true;
           try {
             const res = await fetch('/api/emails?to=' + encodeURIComponent(this.activeMailbox));
             const data = await res.json();
@@ -287,29 +328,44 @@ export function HomePage({ mailDomain }: HomePageProps) {
             this.emails = Array.isArray(data) ? data : [];
           } catch (error) {
             this.status = error instanceof Error ? error.message : 'Failed to load emails.';
+          } finally {
+            this.isInboxLoading = false;
           }
         },
 
         async viewEmail(id) {
           if (!this.activeMailbox) return;
-          const res = await fetch('/api/email/' + id + '?to=' + encodeURIComponent(this.activeMailbox));
-          const e = await res.json();
-          if (!res.ok) return alert(this.getErrorMessage(e, 'Failed to load email.'));
-
-          this.selected = e;
-          this.selectedPlainText = this.getPlainTextBody(e);
-          this.selectedIsHtml = this.hasMeaningfulHtml(e, this.selectedPlainText);
           this.modalOpen = true;
+          this.isEmailLoading = true;
+          this.selected = null;
+          this.selectedIsHtml = false;
+          this.selectedPlainText = '';
 
-          setTimeout(() => {
-            if (this.selectedIsHtml) {
-              this.renderSelectedHtml(e.body_html || '');
-            }
-          }, 0);
+          try {
+            const res = await fetch('/api/email/' + id + '?to=' + encodeURIComponent(this.activeMailbox));
+            const e = await res.json();
+            if (!res.ok) throw new Error(this.getErrorMessage(e, 'Failed to load email.'));
+
+            this.selected = e;
+            this.selectedPlainText = this.getPlainTextBody(e);
+            this.selectedIsHtml = this.hasMeaningfulHtml(e, this.selectedPlainText);
+
+            setTimeout(() => {
+              if (this.selectedIsHtml) {
+                this.renderSelectedHtml(e.body_html || '');
+              }
+            }, 0);
+          } catch (error) {
+            this.closeModal();
+            alert(error instanceof Error ? error.message : 'Failed to load email.');
+          } finally {
+            this.isEmailLoading = false;
+          }
         },
 
         closeModal() {
           this.modalOpen = false;
+          this.isEmailLoading = false;
           this.selected = null;
           this.selectedIsHtml = false;
           this.selectedPlainText = '';
@@ -409,6 +465,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
     button:hover { filter:brightness(1.02);transform:translateY(-.5px); }
     .status {font-size:.87rem;color:var(--muted);margin-top:.3rem;background:#f8f9ff;border:1px dashed #dce2f7;border-radius:10px;padding:.45rem .6rem; }
     .email-list-wrap { margin-top:1rem; }
+    .stack-sm { display:grid; gap:.65rem; }
     .page-main { flex:1; }
     .inbox-head { display:flex;justify-content:space-between;align-items:center;margin-bottom:.65rem;color:var(--muted);font-size:.9rem; }
     .email-item { background:linear-gradient(180deg,#fff 0%,#fdfdff 100%);padding:.95rem 1rem;margin-bottom:.65rem;border-radius:13px;border:1px solid var(--line);cursor:pointer;transition:all .16s ease; }
@@ -417,6 +474,61 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .subject { font-weight:600; color:var(--text); }
     .meta { font-size:.82rem; color:var(--muted); }
     .snippet { margin-top:.35rem;color:#4b5563;font-size:.88rem; }
+    .empty-state {
+      display:grid;
+      place-items:center;
+      text-align:center;
+      gap:.85rem;
+      padding:2rem 1.25rem;
+      background:linear-gradient(180deg, rgba(255,255,255,.9) 0%, rgba(247,248,255,.95) 100%);
+      border:1px solid var(--line);
+      border-radius:18px;
+      box-shadow:0 18px 32px rgba(109,94,252,.08);
+    }
+    .empty-icon {
+      width:3.5rem;
+      height:3.5rem;
+      display:grid;
+      place-items:center;
+      border-radius:1.2rem;
+      background:radial-gradient(circle at 30% 30%, #ffffff 0%, #f3f1ff 42%, #e7ebff 100%);
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.8), 0 10px 24px rgba(109,94,252,.12);
+      font-size:1.4rem;
+    }
+    .empty-copy { max-width:34rem; }
+    .empty-copy h3 { margin:0 0 .3rem; font-size:1.05rem; letter-spacing:-.01em; }
+    .empty-copy p { margin:0; color:#5b6477; font-size:.93rem; }
+    .email-skeleton { cursor:default; pointer-events:none; }
+    .email-skeleton:hover { border-color:var(--line); box-shadow:none; transform:none; }
+    .skeleton-line,
+    .skeleton-block {
+      position:relative;
+      overflow:hidden;
+      background:linear-gradient(90deg, #eef2ff 0%, #f8f9ff 50%, #eef2ff 100%);
+      background-size:200% 100%;
+      animation:skeleton-shimmer 1.4s ease-in-out infinite;
+      border-radius:999px;
+    }
+    .skeleton-line { height:.8rem; }
+    .skeleton-subject { width:58%; height:1rem; }
+    .skeleton-meta { width:22%; }
+    .skeleton-from { width:38%; margin-top:.8rem; }
+    .skeleton-snippet { width:100%; margin-top:.7rem; }
+    .skeleton-snippet.short { width:74%; }
+    .skeleton-heading { width:42%; height:1.1rem; margin-bottom:.75rem; }
+    .skeleton-meta.wide { width:68%; margin-bottom:1rem; }
+    .skeleton-block {
+      width:100%;
+      height:18rem;
+      border-radius:18px;
+      margin-bottom:1rem;
+      border:1px solid #edf1ff;
+    }
+    .modal-skeleton { padding:.2rem 0 .4rem; }
+    @keyframes skeleton-shimmer {
+      0% { background-position:200% 0; }
+      100% { background-position:-200% 0; }
+    }
     .modal { position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;justify-content:center;align-items:center;padding:1rem; }
     .modal.show { display:flex; }
     .modal-content { background:#fff;border-radius:14px;max-width:92%;max-height:90%;overflow:auto;width:780px;border:1px solid var(--line);padding:1.1rem; }

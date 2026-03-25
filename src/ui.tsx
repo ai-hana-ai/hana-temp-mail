@@ -624,10 +624,15 @@ export function HomePage({ mailDomain }: HomePageProps) {
       --accent-soft: #eef0ff;
     }
     * { box-sizing: border-box; }
-    html { min-height: 100%; }
+    html {
+      min-height: 100%;
+      max-width: 100vw;
+      overflow-x: hidden;
+    }
     body {
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      max-width: 1440px;
+      width: 100%;
+      max-width: min(1440px, 100vw);
       margin: 0 auto;
       padding: 1.25rem;
       line-height: 1.5;
@@ -639,6 +644,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
       min-height: 100dvh;
       display: flex;
       flex-direction: column;
+      overflow-x: hidden;
     }
     h1 { margin: 0; font-size: 1.85rem; letter-spacing: -0.02em; }
     p.sub { margin: 0.45rem 0 1rem; color: var(--muted); }
@@ -657,11 +663,11 @@ export function HomePage({ mailDomain }: HomePageProps) {
     button { background:linear-gradient(135deg,var(--accent) 0%,var(--accent-2) 100%);color:#fff;border:none;padding:.72rem .95rem;border-radius:11px;cursor:pointer;font-weight:700;letter-spacing:.01em;box-shadow:0 8px 20px rgba(109, 94, 252, .28); }
     button:hover { filter:brightness(1.02);transform:translateY(-.5px); }
     .status {font-size:.87rem;color:var(--muted);margin-top:.3rem;background:#f8f9ff;border:1px dashed #dce2f7;border-radius:10px;padding:.45rem .6rem; }
-    .sidebar { width:100%;max-width:100%;display:flex; flex-direction:column; gap:1rem; min-height:0; }
-    .email-list-wrap { margin-top:0; display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+    .sidebar { width:100%;max-width:100vw;display:flex; flex-direction:column; gap:1rem; min-height:0; min-width:0; overflow-x:hidden; }
+    .email-list-wrap { margin-top:0; display:flex; flex-direction:column; flex:1 1 auto; min-height:0; min-width:0; max-width:100vw; overflow-x:hidden; }
     .email-list-body { flex:1 1 auto; min-height:0; overflow-y:auto; }
     .stack-sm { display:flex; flex-direction:column; gap:.65rem; min-height:0; }
-    .page-main { width:100%;max-width:100%;flex:1; display:grid; gap:1rem; min-height:0; }
+    .page-main { width:100%;max-width:100vw;flex:1; display:grid; gap:1rem; min-height:0; min-width:0; overflow-x:hidden; }
     .detail-panel { display:none; }
     .detail-stage { min-height:100%; }
     .detail-content { min-height:100%; max-width:100%; overflow:hidden; }
@@ -791,6 +797,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
       align-items:stretch;
       gap:.35rem;
       min-width:0;
+      max-width:100%;
       background:linear-gradient(180deg,#fff 0%,#fdfdff 100%);
       padding:.95rem 1rem;
       border-radius:13px;
@@ -819,6 +826,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
       text-overflow:ellipsis;
     }
     .email-item .meta {
+      display:block;
       min-width:0;
       overflow:hidden;
       text-overflow:ellipsis;
@@ -828,6 +836,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .snippet {
       display:block;
       width:100%;
+      min-width:0;
       margin-top:.1rem;
       color:#4b5563;
       font-size:.88rem;
@@ -934,6 +943,11 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .footer { margin-top:1.1rem;text-align:center;color:var(--muted);font-size:.84rem;padding-top:.65rem;border-top:1px solid #e8ebf7; }
     .footer a { color: var(--accent); text-decoration:none; font-weight:600; }
     .footer a:hover { text-decoration:underline; }
+    @media (max-width: 1023.98px) {
+      body {
+        padding: 1rem .75rem;
+      }
+    }
     @media (min-width: 1024px) {
       html, body { height:100%; }
       body {

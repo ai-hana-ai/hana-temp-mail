@@ -17,76 +17,120 @@ export function HomePage({ mailDomain }: HomePageProps) {
     </div>
 
     <div class="page-main">
-      <div class="card">
-        <div class="selector">
-          <div class="input-wrap">
-            <input x-model="localPart" @input="localPart = (localPart || '').toLowerCase()" type="text" placeholder="email name" />
-            <span class="domain-suffix">@${mailDomain}</span>
-            <button class="dice-btn" :class="{ 'is-rolling': diceRolling }" :disabled="diceRolling" @click.prevent="generateRandom()" title="Generate random inbox">🎲</button>
+      <aside class="sidebar">
+        <div class="card">
+          <div class="selector">
+            <div class="input-wrap">
+              <input x-model="localPart" @input="localPart = (localPart || '').toLowerCase()" type="text" placeholder="email name" />
+              <span class="domain-suffix">@${mailDomain}</span>
+              <button class="dice-btn" :class="{ 'is-rolling': diceRolling }" :disabled="diceRolling" @click.prevent="generateRandom()" title="Generate random inbox">🎲</button>
+            </div>
+            <button style="display:block;width:100%;" @click="activateInbox()">Open Inbox</button>
           </div>
-          <button style="display:block;width:100%;" @click="activateInbox()">Open Inbox</button>
-        </div>
-        <div class="status" x-text="status"></div>
-      </div>
-
-      <div class="email-list-wrap" id="email-list" x-show="showInbox" style="display:none;">
-        <div class="inbox-head">
-          <span>Inbox: <b x-text="activeMailbox"></b></span>
-          <span x-text="emails.length + ' message(s)'"></span>
+          <div class="status" x-text="status"></div>
         </div>
 
-        <template x-if="isInboxLoading">
-          <div class="stack-sm">
-            <template x-for="n in skeletonItems" :key="'email-skeleton-' + n">
-              <div class="email-item email-skeleton" aria-hidden="true">
-                <div class="email-row">
-                  <div class="skeleton-line skeleton-subject"></div>
-                  <div class="skeleton-line skeleton-meta"></div>
+        <div class="email-list-wrap card" id="email-list" x-show="showInbox" style="display:none;">
+          <div class="inbox-head">
+            <span>Inbox: <b x-text="activeMailbox"></b></span>
+            <span x-text="emails.length + ' message(s)'"></span>
+          </div>
+
+          <div class="email-list-body">
+            <template x-if="isInboxLoading">
+              <div class="stack-sm">
+                <template x-for="n in skeletonItems" :key="'email-skeleton-' + n">
+                  <div class="email-item email-skeleton" aria-hidden="true">
+                    <div class="email-row">
+                      <div class="skeleton-line skeleton-subject"></div>
+                      <div class="skeleton-line skeleton-meta"></div>
+                    </div>
+                    <div class="skeleton-line skeleton-from"></div>
+                    <div class="skeleton-line skeleton-snippet"></div>
+                    <div class="skeleton-line skeleton-snippet short"></div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="!isInboxLoading && emails.length === 0">
+              <div class="empty-state empty-state-compact">
+                <div class="empty-icon">✉️</div>
+                <div class="empty-copy">
+                  <h3>Your inbox is empty</h3>
+                  <p>No emails have arrived at <b x-text="activeMailbox"></b> yet. Share this address or wait a moment. The inbox refreshes automatically when new messages arrive.</p>
                 </div>
-                <div class="skeleton-line skeleton-from"></div>
-                <div class="skeleton-line skeleton-snippet"></div>
-                <div class="skeleton-line skeleton-snippet short"></div>
+              </div>
+            </template>
+
+            <template x-if="!isInboxLoading && emails.length > 0">
+              <div class="stack-sm">
+                <template x-for="e in emails" :key="e.id">
+                  <div class="email-item" :class="{ 'is-active': selected && selected.id === e.id }" @click="viewEmail(e.id)">
+                    <div class="email-row">
+                      <div class="subject" x-text="e.subject || '(No Subject)'"></div>
+                      <span class="meta" x-text="formatTimestamp(e.timestamp)"></span>
+                    </div>
+                    <div class="meta" x-text="'From: ' + e.id_from"></div>
+                    <div class="snippet" x-text="previewText(e)"></div>
+                  </div>
+                </template>
               </div>
             </template>
           </div>
-        </template>
+        </div>
+      </aside>
 
-        <template x-if="!isInboxLoading && emails.length === 0">
-          <div class="empty-state">
-            <div class="empty-icon">✉️</div>
+      <section class="detail-panel card" x-show="showInbox && isDesktopLayout" style="display:none;">
+        <template x-if="!selected && !isEmailLoading">
+          <div class="detail-empty">
+            <div class="empty-icon">📨</div>
             <div class="empty-copy">
-              <h3>Your inbox is empty</h3>
-              <p>No emails have arrived at <b x-text="activeMailbox"></b> yet. Share this address or wait a moment. The inbox refreshes automatically when new messages arrive.</p>
+              <h3>Select an email</h3>
+              <p>Choose a message from the inbox list to read it here.</p>
             </div>
           </div>
         </template>
 
-        <template x-if="!isInboxLoading && emails.length > 0">
-          <div>
-            <template x-for="e in emails" :key="e.id">
-              <div class="email-item" @click="viewEmail(e.id)">
-                <div class="email-row">
-                  <div class="subject" x-text="e.subject || '(No Subject)'"></div>
-                  <span class="meta" x-text="formatTimestamp(e.timestamp)"></span>
-                </div>
-                <div class="meta" x-text="'From: ' + e.id_from"></div>
-                <div class="snippet" x-text="previewText(e)"></div>
-              </div>
+        <template x-if="isEmailLoading">
+          <div class="modal-skeleton detail-loading" aria-hidden="true">
+            <div class="skeleton-line skeleton-heading"></div>
+            <div class="skeleton-line skeleton-meta wide"></div>
+            <div class="skeleton-block"></div>
+            <div class="skeleton-line skeleton-snippet"></div>
+            <div class="skeleton-line skeleton-snippet short"></div>
+          </div>
+        </template>
+
+        <template x-if="selected && !isEmailLoading">
+          <div class="detail-content">
+            <div class="detail-head">
+              <h2 x-text="selected?.subject || '(No Subject)'"></h2>
+              <p class="meta" x-text="selected ? ('From: ' + selected.id_from + ' | To: ' + selected.id_to) : ''"></p>
+              <p class="meta" x-text="selected ? formatTimestamp(selected.timestamp) : ''"></p>
+            </div>
+            <hr class="detail-divider" />
+
+            <template x-if="selectedIsHtml">
+              <iframe id="email-html-frame-desktop" class="email-html-frame" sandbox="allow-popups" referrerpolicy="no-referrer"></iframe>
+            </template>
+            <template x-if="!selectedIsHtml">
+              <pre class="text-body" x-text="selectedPlainText || '(No message body)'"></pre>
             </template>
           </div>
         </template>
-      </div>
+      </section>
     </div>
 
     <div class="footer">
       Built for Cloudflare Workers · <a href="https://github.com/ai-hana-ai/hana-temp-mail" target="_blank" rel="noopener noreferrer">View source on GitHub</a>
     </div>
 
-    <div class="modal" :class="{ 'show': modalOpen }" @click="closeModal()">
+    <div class="modal" :class="{ 'show': modalOpen && !isDesktopLayout }" @click="closeModal()">
       <div class="modal-content" @click.stop>
         <h2 x-text="selected?.subject || '(No Subject)'"></h2>
         <p class="meta" x-text="selected ? ('From: ' + selected.id_from + ' | To: ' + selected.id_to) : ''"></p>
-        <hr style="border:0;border-top:1px solid #eee;" />
+        <hr class="detail-divider" />
 
         <template x-if="isEmailLoading">
           <div class="modal-skeleton" aria-hidden="true">
@@ -99,7 +143,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
         </template>
 
         <template x-if="selected && !isEmailLoading && selectedIsHtml">
-          <iframe id="email-html-frame" sandbox="allow-popups" referrerpolicy="no-referrer" style="width:100%;min-height:420px;border:1px solid #eee;border-radius:10px;background:#fff;"></iframe>
+          <iframe id="email-html-frame-mobile" class="email-html-frame" sandbox="allow-popups" referrerpolicy="no-referrer"></iframe>
         </template>
         <template x-if="selected && !isEmailLoading && !selectedIsHtml">
           <pre class="text-body" x-text="selectedPlainText || '(No message body)'"></pre>
@@ -124,13 +168,16 @@ export function HomePage({ mailDomain }: HomePageProps) {
         selectedIsHtml: false,
         selectedPlainText: '',
         modalOpen: false,
+        isDesktopLayout: false,
         isInboxLoading: false,
         isEmailLoading: false,
         eventSource: null,
         beforeUnloadHandler: null,
+        resizeHandler: null,
         diceRolling: false,
         skeletonItems: [1, 2, 3],
         inboxLoadSeq: 0,
+        emailLoadSeq: 0,
 
         normalizeLocalPart(v) {
           const val = (v || '').trim().toLowerCase();
@@ -150,9 +197,22 @@ export function HomePage({ mailDomain }: HomePageProps) {
           });
         },
 
-        async beginInboxLoad() {
+        syncViewportState() {
+          this.isDesktopLayout = window.matchMedia('(min-width: 1024px)').matches;
+          if (this.isDesktopLayout) {
+            this.modalOpen = false;
+          }
+          this.scheduleHtmlRender();
+        },
+
+        async beginInboxLoad(preserveExisting = false) {
           this.inboxLoadSeq += 1;
           const loadSeq = this.inboxLoadSeq;
+          if (preserveExisting) {
+            this.isInboxLoading = false;
+            return loadSeq;
+          }
+
           this.isInboxLoading = true;
           this.emails = [];
           await this.waitForPaint();
@@ -298,11 +358,32 @@ export function HomePage({ mailDomain }: HomePageProps) {
           ].join('');
         },
 
-        renderSelectedHtml(emailHtml) {
-          const frame = document.getElementById('email-html-frame');
+        renderSelectedHtml(frameId, emailHtml) {
+          const frame = document.getElementById(frameId);
           if (frame) {
             frame.setAttribute('srcdoc', this.buildHtmlDocument(emailHtml));
           }
+        },
+
+        clearRenderedHtml() {
+          ['email-html-frame-desktop', 'email-html-frame-mobile'].forEach((frameId) => {
+            const frame = document.getElementById(frameId);
+            if (frame) frame.removeAttribute('srcdoc');
+          });
+        },
+
+        scheduleHtmlRender() {
+          if (!this.selectedIsHtml || !this.selected) {
+            this.clearRenderedHtml();
+            return;
+          }
+
+          const frameId = this.isDesktopLayout ? 'email-html-frame-desktop' : 'email-html-frame-mobile';
+          const emailHtml = this.selected.body_html || '';
+          this.clearRenderedHtml();
+          setTimeout(() => {
+            this.renderSelectedHtml(frameId, emailHtml);
+          }, 0);
         },
 
         async generateRandom() {
@@ -336,15 +417,26 @@ export function HomePage({ mailDomain }: HomePageProps) {
           this.connectSSE();
         },
 
-        async loadEmails() {
+        async loadEmails(options = {}) {
           if (!this.activeMailbox) return;
-          const loadSeq = await this.beginInboxLoad();
+          const preserveExisting = Boolean(options && options.preserveExisting);
+          const loadSeq = await this.beginInboxLoad(preserveExisting);
           try {
             const res = await fetch('/api/emails?to=' + encodeURIComponent(this.activeMailbox));
             const data = await res.json();
             if (!res.ok) throw new Error(this.getErrorMessage(data, 'Failed to load emails.'));
             if (loadSeq !== this.inboxLoadSeq) return;
             this.emails = Array.isArray(data) ? data : [];
+            if (this.selected) {
+              const matchingEmail = this.emails.find((email) => email.id === this.selected.id);
+              if (!matchingEmail) {
+                this.selected = null;
+                this.selectedIsHtml = false;
+                this.selectedPlainText = '';
+                this.clearRenderedHtml();
+                this.modalOpen = false;
+              }
+            }
             await this.waitForPaint();
             this.status = 'Monitoring: ' + this.activeMailbox + ' (real-time active)';
           } catch (error) {
@@ -359,42 +451,43 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
         async viewEmail(id) {
           if (!this.activeMailbox) return;
-          this.modalOpen = true;
+          this.emailLoadSeq += 1;
+          const loadSeq = this.emailLoadSeq;
+          this.modalOpen = !this.isDesktopLayout;
           this.isEmailLoading = true;
           this.selected = null;
           this.selectedIsHtml = false;
           this.selectedPlainText = '';
+          this.clearRenderedHtml();
 
           try {
             const res = await fetch('/api/email/' + id + '?to=' + encodeURIComponent(this.activeMailbox));
             const e = await res.json();
             if (!res.ok) throw new Error(this.getErrorMessage(e, 'Failed to load email.'));
+            if (loadSeq !== this.emailLoadSeq) return;
 
             this.selected = e;
             this.selectedPlainText = this.getPlainTextBody(e);
             this.selectedIsHtml = this.hasMeaningfulHtml(e, this.selectedPlainText);
-
-            setTimeout(() => {
-              if (this.selectedIsHtml) {
-                this.renderSelectedHtml(e.body_html || '');
-              }
-            }, 0);
+            this.scheduleHtmlRender();
           } catch (error) {
-            this.closeModal();
+            if (loadSeq !== this.emailLoadSeq) return;
+            this.modalOpen = false;
+            this.selected = null;
+            this.selectedIsHtml = false;
+            this.selectedPlainText = '';
+            this.clearRenderedHtml();
             alert(error instanceof Error ? error.message : 'Failed to load email.');
           } finally {
-            this.isEmailLoading = false;
+            if (loadSeq === this.emailLoadSeq) {
+              this.isEmailLoading = false;
+            }
           }
         },
 
         closeModal() {
           this.modalOpen = false;
-          this.isEmailLoading = false;
-          this.selected = null;
-          this.selectedIsHtml = false;
-          this.selectedPlainText = '';
-          const frame = document.getElementById('email-html-frame');
-          if (frame) frame.removeAttribute('srcdoc');
+          this.clearRenderedHtml();
         },
 
         closeSSE() {
@@ -414,7 +507,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
           });
 
           this.eventSource.addEventListener('update', () => {
-            this.loadEmails();
+            this.loadEmails({ preserveExisting: true });
           });
 
           this.eventSource.onerror = () => {
@@ -431,11 +524,18 @@ export function HomePage({ mailDomain }: HomePageProps) {
             window.removeEventListener('beforeunload', this.beforeUnloadHandler);
             this.beforeUnloadHandler = null;
           }
+          if (this.resizeHandler) {
+            window.removeEventListener('resize', this.resizeHandler);
+            this.resizeHandler = null;
+          }
         },
 
         async init() {
           this.beforeUnloadHandler = () => this.closeSSE();
           window.addEventListener('beforeunload', this.beforeUnloadHandler);
+          this.resizeHandler = () => this.syncViewportState();
+          window.addEventListener('resize', this.resizeHandler);
+          this.syncViewportState();
           await this.generateRandom();
         },
       };
@@ -458,7 +558,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
     html { min-height: 100%; }
     body {
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      max-width: 1040px;
+      max-width: 1440px;
       margin: 0 auto;
       padding: 1.25rem;
       line-height: 1.5;
@@ -488,12 +588,35 @@ export function HomePage({ mailDomain }: HomePageProps) {
     button { background:linear-gradient(135deg,var(--accent) 0%,var(--accent-2) 100%);color:#fff;border:none;padding:.72rem .95rem;border-radius:11px;cursor:pointer;font-weight:700;letter-spacing:.01em;box-shadow:0 8px 20px rgba(109, 94, 252, .28); }
     button:hover { filter:brightness(1.02);transform:translateY(-.5px); }
     .status {font-size:.87rem;color:var(--muted);margin-top:.3rem;background:#f8f9ff;border:1px dashed #dce2f7;border-radius:10px;padding:.45rem .6rem; }
-    .email-list-wrap { margin-top:1rem; }
+    .sidebar { display:grid; gap:1rem; }
+    .email-list-wrap { margin-top:0; }
+    .email-list-body { display:grid; gap:.65rem; }
     .stack-sm { display:grid; gap:.65rem; }
-    .page-main { flex:1; }
+    .page-main { flex:1; display:grid; gap:1rem; }
+    .detail-panel { display:none; }
+    .detail-content { min-height:100%; }
+    .detail-head h2 { margin:0 0 .35rem; font-size:1.35rem; letter-spacing:-.02em; }
+    .detail-empty {
+      min-height:100%;
+      display:grid;
+      place-items:center;
+      text-align:center;
+      gap:.9rem;
+      padding:2.2rem 1.25rem;
+      background:linear-gradient(180deg, rgba(255,255,255,.82) 0%, rgba(244,247,255,.95) 100%);
+      border:1px dashed #dce2f7;
+      border-radius:18px;
+    }
+    .detail-loading { min-height:100%; }
+    .detail-divider { border:0; border-top:1px solid #e9ecf7; margin:1rem 0; }
     .inbox-head { display:flex;justify-content:space-between;align-items:center;margin-bottom:.65rem;color:var(--muted);font-size:.9rem; }
-    .email-item { background:linear-gradient(180deg,#fff 0%,#fdfdff 100%);padding:.95rem 1rem;margin-bottom:.65rem;border-radius:13px;border:1px solid var(--line);cursor:pointer;transition:all .16s ease; }
+    .email-item { background:linear-gradient(180deg,#fff 0%,#fdfdff 100%);padding:.95rem 1rem;border-radius:13px;border:1px solid var(--line);cursor:pointer;transition:all .16s ease; }
     .email-item:hover { border-color:#c9d0ff;box-shadow:0 10px 24px rgba(79,70,229,.11);transform:translateY(-1px); }
+    .email-item.is-active {
+      border-color:#98a3ff;
+      background:linear-gradient(180deg, #f7f8ff 0%, #eef1ff 100%);
+      box-shadow:0 14px 30px rgba(79,70,229,.14);
+    }
     .email-row { display:flex;justify-content:space-between;gap:.75rem;align-items:center; }
     .subject { font-weight:600; color:var(--text); }
     .meta { font-size:.82rem; color:var(--muted); }
@@ -522,6 +645,11 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .empty-copy { max-width:34rem; }
     .empty-copy h3 { margin:0 0 .3rem; font-size:1.05rem; letter-spacing:-.01em; }
     .empty-copy p { margin:0; color:#5b6477; font-size:.93rem; }
+    .empty-state-compact {
+      padding:1.3rem 1rem;
+      box-shadow:none;
+      border-style:dashed;
+    }
     .email-skeleton { cursor:default; pointer-events:none; }
     .email-skeleton:hover { border-color:var(--line); box-shadow:none; transform:none; }
     .skeleton-line,
@@ -553,6 +681,13 @@ export function HomePage({ mailDomain }: HomePageProps) {
       0% { background-position:200% 0; }
       100% { background-position:-200% 0; }
     }
+    .email-html-frame {
+      width:100%;
+      min-height:420px;
+      border:1px solid #e5e7eb;
+      border-radius:10px;
+      background:#fff;
+    }
     .modal { position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;justify-content:center;align-items:center;padding:1rem; }
     .modal.show { display:flex; }
     .modal-content { background:#fff;border-radius:14px;max-width:92%;max-height:90%;overflow:auto;width:780px;border:1px solid var(--line);padding:1.1rem; }
@@ -560,6 +695,43 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .footer { margin-top:1.1rem;text-align:center;color:var(--muted);font-size:.84rem;padding-top:.65rem;border-top:1px solid #e8ebf7; }
     .footer a { color: var(--accent); text-decoration:none; font-weight:600; }
     .footer a:hover { text-decoration:underline; }
+    @media (min-width: 1024px) {
+      body { padding:1.5rem; }
+      .hero { text-align:left; margin-bottom:1.25rem; }
+      .hero-badge { margin:0 0 .55rem; }
+      .page-main {
+        grid-template-columns:minmax(360px, 390px) minmax(0, 1fr);
+        align-items:start;
+      }
+      .sidebar {
+        position:sticky;
+        top:1.5rem;
+        height:calc(100dvh - 3rem);
+        grid-template-rows:auto minmax(0, 1fr);
+      }
+      .email-list-wrap {
+        min-height:0;
+        display:grid;
+        grid-template-rows:auto minmax(0, 1fr);
+      }
+      .email-list-body {
+        min-height:0;
+        overflow:auto;
+        padding-right:.25rem;
+      }
+      .detail-panel {
+        display:block;
+        min-height:calc(100dvh - 3rem);
+      }
+      .detail-content,
+      .detail-loading,
+      .detail-empty {
+        min-height:calc(100dvh - 7rem);
+      }
+      .text-body { min-height:calc(100dvh - 14rem); }
+      .email-html-frame { min-height:calc(100dvh - 14rem); }
+      .modal { display:none !important; }
+    }
   `;
 
   return (

@@ -93,8 +93,23 @@ export function HomePage({ mailDomain }: HomePageProps) {
             <div class="detail-empty-glow"></div>
           </div>
           <div class="empty-copy detail-empty-copy">
-            <h3>Select an email</h3>
-            <p>Pick a message from the inbox to preview its contents, sender, and attachments safely here.</p>
+            <span class="detail-empty-kicker">Welcome to Hana Temp Mail</span>
+            <h3>Your inbox is live. Pick any message to inspect it here.</h3>
+            <p>This workspace is built for quick disposable inboxes. Create or reuse an address, keep the inbox open, and incoming emails will appear automatically without a full page refresh.</p>
+          </div>
+          <div class="detail-guide-grid">
+            <article class="detail-guide-card">
+              <h4>How it works</h4>
+              <p>Choose a mailbox name, click <strong>Open Inbox</strong>, then share that address anywhere you need a temporary mailbox.</p>
+            </article>
+            <article class="detail-guide-card">
+              <h4>What you can do</h4>
+              <p>Preview sender details, timestamps, plain text, and safe HTML email content from the message list on the left.</p>
+            </article>
+            <article class="detail-guide-card">
+              <h4>Best practice</h4>
+              <p>Leave this inbox open while testing signups, OTP flows, and transactional emails so new messages show up in real time.</p>
+            </article>
           </div>
         </div>
 
@@ -653,6 +668,21 @@ export function HomePage({ mailDomain }: HomePageProps) {
       display:grid;
       gap:.45rem;
     }
+    .detail-empty-kicker {
+      display:inline-flex;
+      justify-content:center;
+      align-items:center;
+      width:max-content;
+      margin:0 auto;
+      padding:.32rem .7rem;
+      border-radius:999px;
+      background:rgba(109, 94, 252, .1);
+      color:#5548d9;
+      font-size:.76rem;
+      font-weight:700;
+      letter-spacing:.04em;
+      text-transform:uppercase;
+    }
     .detail-empty-copy h3 {
       margin:0;
       font-size:1.28rem;
@@ -662,6 +692,32 @@ export function HomePage({ mailDomain }: HomePageProps) {
       margin:0;
       font-size:.97rem;
       color:#5b6477;
+    }
+    .detail-guide-grid {
+      width:100%;
+      max-width:48rem;
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(13rem, 1fr));
+      gap:.9rem;
+    }
+    .detail-guide-card {
+      text-align:left;
+      padding:1rem 1rem 1.05rem;
+      border-radius:16px;
+      border:1px solid rgba(210, 217, 242, .95);
+      background:rgba(255, 255, 255, .82);
+      box-shadow:0 10px 24px rgba(109,94,252,.06);
+      backdrop-filter:blur(8px);
+    }
+    .detail-guide-card h4 {
+      margin:0 0 .38rem;
+      font-size:.98rem;
+      letter-spacing:-.01em;
+    }
+    .detail-guide-card p {
+      margin:0;
+      color:#5b6477;
+      font-size:.9rem;
     }
     .detail-loading { min-height:100%; }
     .detail-divider { border:0; border-top:1px solid #e9ecf7; margin:1rem 0; }
@@ -758,42 +814,71 @@ export function HomePage({ mailDomain }: HomePageProps) {
         height:100dvh;
         max-height:100dvh;
         overflow:hidden;
+        display:grid;
+        grid-template-rows:auto minmax(0, 1fr) auto;
+        gap:1.25rem;
       }
-      .hero { text-align:left; margin-bottom:1.25rem; }
+      .hero { text-align:left; margin-bottom:0; }
       .hero-badge { margin:0 0 .55rem; }
       .page-main {
         grid-template-columns:minmax(360px, 390px) minmax(0, 1fr);
         align-items:stretch;
         min-height:0;
+        height:100%;
+        overflow:hidden;
       }
       .sidebar {
         height:100%;
         grid-template-rows:auto minmax(0, 1fr);
         min-height:0;
+        overflow:hidden;
       }
       .email-list-wrap {
         min-height:0;
         display:grid;
         grid-template-rows:auto minmax(0, 1fr);
+        height:100%;
+        overflow:hidden;
       }
       .email-list-body {
         min-height:0;
-        overflow:auto;
+        height:100%;
+        overflow-y:auto;
+        overscroll-behavior:contain;
         padding-right:.25rem;
       }
       .detail-panel {
         display:block;
         min-height:0;
         height:100%;
-        overflow:auto;
+        overflow:hidden;
+      }
+      .detail-stage {
+        height:100%;
+        min-height:0;
       }
       .detail-content,
       .detail-loading,
       .detail-empty {
         min-height:100%;
+        height:100%;
       }
-      .text-body { min-height:calc(100dvh - 15.5rem); }
-      .email-html-frame { min-height:calc(100dvh - 15.5rem); }
+      .detail-content {
+        display:grid;
+        grid-template-rows:auto auto minmax(0, 1fr);
+      }
+      .detail-loading {
+        overflow:auto;
+      }
+      .text-body {
+        min-height:0;
+        height:100%;
+        overflow:auto;
+      }
+      .email-html-frame {
+        min-height:0;
+        height:100%;
+      }
       .modal { display:none !important; }
     }
   `;

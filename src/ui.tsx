@@ -82,43 +82,56 @@ export function HomePage({ mailDomain }: HomePageProps) {
       </aside>
 
       <section class="detail-panel card" x-show="showInbox && isDesktopLayout" style="display:none;">
-        <template x-if="!selected && !isEmailLoading">
-          <div class="detail-empty">
-            <div class="empty-icon">📨</div>
-            <div class="empty-copy">
-              <h3>Select an email</h3>
-              <p>Choose a message from the inbox list to read it here.</p>
-            </div>
+        <div
+          class="detail-stage detail-empty"
+          x-show="!selected && !isEmailLoading"
+          x-transition.opacity.duration.180ms
+          x-cloak
+        >
+          <div class="detail-empty-art" aria-hidden="true">
+            <div class="empty-icon detail-empty-icon">📭</div>
+            <div class="detail-empty-glow"></div>
           </div>
-        </template>
-
-        <template x-if="isEmailLoading">
-          <div class="modal-skeleton detail-loading" aria-hidden="true">
-            <div class="skeleton-line skeleton-heading"></div>
-            <div class="skeleton-line skeleton-meta wide"></div>
-            <div class="skeleton-block"></div>
-            <div class="skeleton-line skeleton-snippet"></div>
-            <div class="skeleton-line skeleton-snippet short"></div>
+          <div class="empty-copy detail-empty-copy">
+            <h3>Select an email</h3>
+            <p>Pick a message from the inbox to preview its contents, sender, and attachments safely here.</p>
           </div>
-        </template>
+        </div>
 
-        <template x-if="selected && !isEmailLoading">
-          <div class="detail-content">
-            <div class="detail-head">
-              <h2 x-text="selected?.subject || '(No Subject)'"></h2>
-              <p class="meta" x-text="selected ? ('From: ' + selected.id_from + ' | To: ' + selected.id_to) : ''"></p>
-              <p class="meta" x-text="selected ? formatTimestamp(selected.timestamp) : ''"></p>
-            </div>
-            <hr class="detail-divider" />
+        <div
+          class="detail-stage modal-skeleton detail-loading"
+          x-show="isEmailLoading"
+          x-transition.opacity.duration.180ms
+          x-cloak
+          aria-hidden="true"
+        >
+          <div class="skeleton-line skeleton-heading"></div>
+          <div class="skeleton-line skeleton-meta wide"></div>
+          <div class="skeleton-block"></div>
+          <div class="skeleton-line skeleton-snippet"></div>
+          <div class="skeleton-line skeleton-snippet short"></div>
+        </div>
 
-            <template x-if="selectedIsHtml">
-              <iframe id="email-html-frame-desktop" class="email-html-frame" sandbox="allow-popups" referrerpolicy="no-referrer"></iframe>
-            </template>
-            <template x-if="!selectedIsHtml">
-              <pre class="text-body" x-text="selectedPlainText || '(No message body)'"></pre>
-            </template>
+        <div
+          class="detail-stage detail-content"
+          x-show="selected && !isEmailLoading"
+          x-transition.opacity.duration.180ms
+          x-cloak
+        >
+          <div class="detail-head">
+            <h2 x-text="selected?.subject || '(No Subject)'"></h2>
+            <p class="meta" x-text="selected ? ('From: ' + selected.id_from + ' | To: ' + selected.id_to) : ''"></p>
+            <p class="meta" x-text="selected ? formatTimestamp(selected.timestamp) : ''"></p>
           </div>
-        </template>
+          <hr class="detail-divider" />
+
+          <template x-if="selectedIsHtml">
+            <iframe id="email-html-frame-desktop" class="email-html-frame" sandbox="allow-popups" referrerpolicy="no-referrer"></iframe>
+          </template>
+          <template x-if="!selectedIsHtml">
+            <pre class="text-body" x-text="selectedPlainText || '(No message body)'"></pre>
+          </template>
+        </div>
       </section>
     </div>
 
@@ -590,22 +603,65 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .status {font-size:.87rem;color:var(--muted);margin-top:.3rem;background:#f8f9ff;border:1px dashed #dce2f7;border-radius:10px;padding:.45rem .6rem; }
     .sidebar { display:grid; gap:1rem; }
     .email-list-wrap { margin-top:0; }
-    .email-list-body { display:grid; gap:.65rem; }
+    .email-list-body { display:grid; gap:.65rem; min-height:0; }
     .stack-sm { display:grid; gap:.65rem; }
-    .page-main { flex:1; display:grid; gap:1rem; }
+    .page-main { flex:1; display:grid; gap:1rem; min-height:0; }
     .detail-panel { display:none; }
+    .detail-stage { min-height:100%; }
     .detail-content { min-height:100%; }
     .detail-head h2 { margin:0 0 .35rem; font-size:1.35rem; letter-spacing:-.02em; }
     .detail-empty {
       min-height:100%;
-      display:grid;
-      place-items:center;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      align-items:center;
       text-align:center;
-      gap:.9rem;
-      padding:2.2rem 1.25rem;
-      background:linear-gradient(180deg, rgba(255,255,255,.82) 0%, rgba(244,247,255,.95) 100%);
+      gap:1.25rem;
+      padding:2.8rem 1.5rem;
+      background:
+        radial-gradient(circle at top, rgba(139, 125, 255, .16) 0%, rgba(139, 125, 255, 0) 42%),
+        linear-gradient(180deg, rgba(255,255,255,.88) 0%, rgba(244,247,255,.98) 100%);
       border:1px dashed #dce2f7;
       border-radius:18px;
+      overflow:hidden;
+    }
+    .detail-empty-art {
+      position:relative;
+      width:7rem;
+      height:7rem;
+      display:grid;
+      place-items:center;
+      flex-shrink:0;
+    }
+    .detail-empty-icon {
+      width:5rem;
+      height:5rem;
+      font-size:2rem;
+      border-radius:1.6rem;
+      z-index:1;
+    }
+    .detail-empty-glow {
+      position:absolute;
+      inset:.55rem;
+      border-radius:2rem;
+      background:radial-gradient(circle, rgba(109, 94, 252, .18) 0%, rgba(109, 94, 252, .03) 55%, rgba(109, 94, 252, 0) 75%);
+      filter:blur(4px);
+    }
+    .detail-empty-copy {
+      max-width:26rem;
+      display:grid;
+      gap:.45rem;
+    }
+    .detail-empty-copy h3 {
+      margin:0;
+      font-size:1.28rem;
+      letter-spacing:-.02em;
+    }
+    .detail-empty-copy p {
+      margin:0;
+      font-size:.97rem;
+      color:#5b6477;
     }
     .detail-loading { min-height:100%; }
     .detail-divider { border:0; border-top:1px solid #e9ecf7; margin:1rem 0; }
@@ -696,18 +752,24 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .footer a { color: var(--accent); text-decoration:none; font-weight:600; }
     .footer a:hover { text-decoration:underline; }
     @media (min-width: 1024px) {
-      body { padding:1.5rem; }
+      html, body { height:100%; }
+      body {
+        padding:1.5rem;
+        height:100dvh;
+        max-height:100dvh;
+        overflow:hidden;
+      }
       .hero { text-align:left; margin-bottom:1.25rem; }
       .hero-badge { margin:0 0 .55rem; }
       .page-main {
         grid-template-columns:minmax(360px, 390px) minmax(0, 1fr);
-        align-items:start;
+        align-items:stretch;
+        min-height:0;
       }
       .sidebar {
-        position:sticky;
-        top:1.5rem;
-        height:calc(100dvh - 3rem);
+        height:100%;
         grid-template-rows:auto minmax(0, 1fr);
+        min-height:0;
       }
       .email-list-wrap {
         min-height:0;
@@ -721,15 +783,17 @@ export function HomePage({ mailDomain }: HomePageProps) {
       }
       .detail-panel {
         display:block;
-        min-height:calc(100dvh - 3rem);
+        min-height:0;
+        height:100%;
+        overflow:auto;
       }
       .detail-content,
       .detail-loading,
       .detail-empty {
-        min-height:calc(100dvh - 7rem);
+        min-height:100%;
       }
-      .text-body { min-height:calc(100dvh - 14rem); }
-      .email-html-frame { min-height:calc(100dvh - 14rem); }
+      .text-body { min-height:calc(100dvh - 15.5rem); }
+      .email-html-frame { min-height:calc(100dvh - 15.5rem); }
       .modal { display:none !important; }
     }
   `;

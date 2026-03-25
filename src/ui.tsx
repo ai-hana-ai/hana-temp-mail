@@ -115,7 +115,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
         <div
           class="detail-stage detail-empty"
-          x-show="showInbox && !selected && !isEmailLoading"
+          x-show="showInbox && !selected"
           x-transition.opacity.duration.180ms
           x-cloak
         >
@@ -657,9 +657,9 @@ export function HomePage({ mailDomain }: HomePageProps) {
     button { background:linear-gradient(135deg,var(--accent) 0%,var(--accent-2) 100%);color:#fff;border:none;padding:.72rem .95rem;border-radius:11px;cursor:pointer;font-weight:700;letter-spacing:.01em;box-shadow:0 8px 20px rgba(109, 94, 252, .28); }
     button:hover { filter:brightness(1.02);transform:translateY(-.5px); }
     .status {font-size:.87rem;color:var(--muted);margin-top:.3rem;background:#f8f9ff;border:1px dashed #dce2f7;border-radius:10px;padding:.45rem .6rem; }
-    .sidebar { display:grid; gap:1rem; }
-    .email-list-wrap { margin-top:0; }
-    .email-list-body { display:grid; gap:.65rem; min-height:0; height:100%; overflow-y:auto; }
+    .sidebar { display:flex; flex-direction:column; gap:1rem; min-height:0; }
+    .email-list-wrap { margin-top:0; display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+    .email-list-body { flex:1 1 auto; min-height:0; overflow-y:auto; }
     .stack-sm { display:flex; flex-direction:column; gap:.65rem; min-height:0; }
     .page-main { flex:1; display:grid; gap:1rem; min-height:0; }
     .detail-panel { display:none; }
@@ -793,12 +793,11 @@ export function HomePage({ mailDomain }: HomePageProps) {
       background:linear-gradient(180deg,#fff 0%,#fdfdff 100%);
       padding:.95rem 1rem;
       border-radius:13px;
-      border:1px solid var(--line);
+      border:1px solid #dfe4f4;
       cursor:pointer;
-      transition:border-color .16s ease, box-shadow .16s ease, background .16s ease, transform .16s ease;
-      will-change:transform;
+      transition:border-color .16s ease, box-shadow .16s ease, background .16s ease;
     }
-    .email-item:hover { border-color:#c9d0ff;box-shadow:0 10px 24px rgba(79,70,229,.11);transform:translateY(-1px); }
+    .email-item:hover { border-color:#c9d0ff;box-shadow:0 10px 24px rgba(79,70,229,.11); }
     .email-item.is-active {
       border-color:#98a3ff;
       background:linear-gradient(180deg, #f7f8ff 0%, #eef1ff 100%);
@@ -807,10 +806,20 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .email-item.is-loading {
       cursor:progress;
     }
-    .email-row { display:flex;justify-content:space-between;gap:.75rem;align-items:center; }
-    .subject { font-weight:600; color:var(--text); }
+    .email-row { display:flex;justify-content:space-between;gap:.75rem;align-items:center;min-width:0; }
+    .subject {
+      min-width:0;
+      flex:1 1 auto;
+      font-weight:600;
+      color:var(--text);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
     .meta { font-size:.82rem; color:var(--muted); }
     .snippet {
+      display:block;
+      width:100%;
       margin-top:.1rem;
       color:#4b5563;
       font-size:.88rem;
@@ -913,21 +922,18 @@ export function HomePage({ mailDomain }: HomePageProps) {
         overflow:hidden;
       }
       .sidebar {
-        height:100%;
-        grid-template-rows:auto minmax(0, 1fr);
+        flex:1 1 auto;
         min-height:0;
         overflow:hidden;
       }
       .email-list-wrap {
         min-height:0;
-        display:grid;
-        grid-template-rows:auto minmax(0, 1fr);
-        height:100%;
+        flex:1 1 auto;
         overflow:hidden;
       }
       .email-list-body {
         min-height:0;
-        height:100%;
+        flex:1 1 auto;
         overflow-y:auto;
         overscroll-behavior:contain;
         padding-right:.25rem;

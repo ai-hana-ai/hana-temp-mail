@@ -644,7 +644,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
     p.sub { margin: 0.45rem 0 1rem; color: var(--muted); }
     .hero { margin-bottom: 1rem; text-align:center; }
     .hero-badge { display:inline-flex;align-items:center;gap:.4rem;background:rgba(109, 94, 252, .1);color:#4f46e5;border:1px solid rgba(109, 94, 252, .18);border-radius:999px;padding:.25rem .65rem;font-size:.75rem;font-weight:700;margin:0 auto .55rem; }
-    .card { background:linear-gradient(180deg, #fff 0%, #fcfcff 100%);border:1px solid var(--line);border-radius:16px;padding:1rem;box-shadow:0 10px 26px rgba(23,34,74,.07),0 1px 0 rgba(255,255,255,.8) inset; }
+    .card { width:100%;max-width:100%;background:linear-gradient(180deg, #fff 0%, #fcfcff 100%);border:1px solid var(--line);border-radius:16px;padding:1rem;box-shadow:0 10px 26px rgba(23,34,74,.07),0 1px 0 rgba(255,255,255,.8) inset; }
     .selector { display:grid; gap:.7rem; }
     .input-wrap { position:relative; }
     input[type="text"] { width:100%;padding:.72rem 8.8rem .72rem .78rem;border-radius:10px;border:1px solid #d8deea;font-size:.95rem;outline:none;text-transform:lowercase; }
@@ -657,15 +657,15 @@ export function HomePage({ mailDomain }: HomePageProps) {
     button { background:linear-gradient(135deg,var(--accent) 0%,var(--accent-2) 100%);color:#fff;border:none;padding:.72rem .95rem;border-radius:11px;cursor:pointer;font-weight:700;letter-spacing:.01em;box-shadow:0 8px 20px rgba(109, 94, 252, .28); }
     button:hover { filter:brightness(1.02);transform:translateY(-.5px); }
     .status {font-size:.87rem;color:var(--muted);margin-top:.3rem;background:#f8f9ff;border:1px dashed #dce2f7;border-radius:10px;padding:.45rem .6rem; }
-    .sidebar { display:flex; flex-direction:column; gap:1rem; min-height:0; }
+    .sidebar { width:100%;max-width:100%;display:flex; flex-direction:column; gap:1rem; min-height:0; }
     .email-list-wrap { margin-top:0; display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
     .email-list-body { flex:1 1 auto; min-height:0; overflow-y:auto; }
     .stack-sm { display:flex; flex-direction:column; gap:.65rem; min-height:0; }
-    .page-main { flex:1; display:grid; gap:1rem; min-height:0; }
+    .page-main { width:100%;max-width:100%;flex:1; display:grid; gap:1rem; min-height:0; }
     .detail-panel { display:none; }
     .detail-stage { min-height:100%; }
-    .detail-content { min-height:100%; }
-    .detail-head h2 { margin:0 0 .35rem; font-size:1.35rem; letter-spacing:-.02em; }
+    .detail-content { min-height:100%; max-width:100%; overflow:hidden; }
+    .detail-head h2 { margin:0 0 .35rem; font-size:1.35rem; letter-spacing:-.02em; word-break:break-word; overflow-wrap:anywhere; }
     .detail-empty {
       min-height:100%;
       display:flex;
@@ -790,6 +790,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
       flex-direction:column;
       align-items:stretch;
       gap:.35rem;
+      min-width:0;
       background:linear-gradient(180deg,#fff 0%,#fdfdff 100%);
       padding:.95rem 1rem;
       border-radius:13px;
@@ -807,14 +808,21 @@ export function HomePage({ mailDomain }: HomePageProps) {
       cursor:progress;
     }
     .email-row { display:flex;justify-content:space-between;gap:.75rem;align-items:center;min-width:0; }
+    .email-row > * { min-width:0; }
     .subject {
       min-width:0;
       flex:1 1 auto;
       font-weight:600;
       color:var(--text);
+      overflow:hidden;
       white-space:nowrap;
+      text-overflow:ellipsis;
+    }
+    .email-item .meta {
+      min-width:0;
       overflow:hidden;
       text-overflow:ellipsis;
+      white-space:nowrap;
     }
     .meta { font-size:.82rem; color:var(--muted); }
     .snippet {
@@ -896,8 +904,33 @@ export function HomePage({ mailDomain }: HomePageProps) {
     }
     .modal { position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;justify-content:center;align-items:center;padding:1rem; }
     .modal.show { display:flex; }
-    .modal-content { background:#fff;border-radius:14px;max-width:92%;max-height:90%;overflow:auto;width:780px;border:1px solid var(--line);padding:1.1rem; }
-    .text-body { white-space:pre-wrap;word-break:break-word;background:#fafbff;border:1px solid var(--line);border-radius:10px;padding:.85rem;line-height:1.5; }
+    .modal-content {
+      width:780px;
+      max-width:100%;
+      max-height:90%;
+      overflow:auto;
+      background:#fff;
+      border-radius:14px;
+      border:1px solid var(--line);
+      padding:1.1rem;
+    }
+    .modal-content h2,
+    .modal-content .meta,
+    .detail-content .meta {
+      word-break:break-word;
+      overflow-wrap:anywhere;
+    }
+    .text-body {
+      max-width:100%;
+      overflow-x:auto;
+      white-space:pre-wrap;
+      word-break:break-word;
+      background:#fafbff;
+      border:1px solid var(--line);
+      border-radius:10px;
+      padding:.85rem;
+      line-height:1.5;
+    }
     .footer { margin-top:1.1rem;text-align:center;color:var(--muted);font-size:.84rem;padding-top:.65rem;border-top:1px solid #e8ebf7; }
     .footer a { color: var(--accent); text-decoration:none; font-weight:600; }
     .footer a:hover { text-decoration:underline; }

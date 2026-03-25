@@ -66,7 +66,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
             <template x-if="!isInboxLoading && emails.length > 0">
               <div class="stack-sm">
                 <template x-for="e in emails" :key="e.id">
-                  <div class="email-item" :class="{ 'is-active': selected && selected.id === e.id }" @click="viewEmail(e.id)">
+                  <div class="email-item" :class="{ 'is-active': selectedId === e.id, 'is-loading': isEmailLoading && selectedId === e.id }" @click="viewEmail(e.id)">
                     <div class="email-row">
                       <div class="subject" x-text="e.subject || '(No Subject)'"></div>
                       <span class="meta" x-text="formatTimestamp(e.timestamp)"></span>
@@ -81,10 +81,41 @@ export function HomePage({ mailDomain }: HomePageProps) {
         </div>
       </aside>
 
-      <section class="detail-panel card" x-show="showInbox && isDesktopLayout" style="display:none;">
+      <section class="detail-panel card" x-show="isDesktopLayout" style="display:none;">
+        <div
+          class="detail-stage detail-empty detail-welcome"
+          x-show="!showInbox"
+          x-transition.opacity.duration.180ms
+          x-cloak
+        >
+          <div class="detail-empty-art detail-welcome-art" aria-hidden="true">
+            <div class="empty-icon detail-empty-icon detail-welcome-icon">💌</div>
+            <div class="detail-empty-glow"></div>
+          </div>
+          <div class="empty-copy detail-empty-copy">
+            <span class="detail-empty-kicker">Disposable Inbox, Better Presented</span>
+            <h3>Create a temporary mailbox and inspect emails in real time.</h3>
+            <p>Hana Temp Mail gives you a fast disposable inbox for signups, OTP checks, transactional email testing, and quick verification flows, all inside a focused desktop workspace.</p>
+          </div>
+          <div class="detail-guide-grid detail-welcome-grid">
+            <article class="detail-guide-card">
+              <h4>Instant setup</h4>
+              <p>Pick any mailbox name or roll a random one, then open the inbox in one click.</p>
+            </article>
+            <article class="detail-guide-card">
+              <h4>Live monitoring</h4>
+              <p>Incoming messages appear automatically through realtime updates, so you can keep testing without manual refreshes.</p>
+            </article>
+            <article class="detail-guide-card">
+              <h4>Safe preview</h4>
+              <p>Read plain text or sanitized HTML content with sender details and timestamps in a clean side-by-side layout.</p>
+            </article>
+          </div>
+        </div>
+
         <div
           class="detail-stage detail-empty"
-          x-show="!selected && !isEmailLoading"
+          x-show="showInbox && !selected && !isEmailLoading"
           x-transition.opacity.duration.180ms
           x-cloak
         >
@@ -193,6 +224,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
         activeMailbox: '',
         emails: [],
         selected: null,
+        selectedId: null,
         selectedIsHtml: false,
         selectedPlainText: '',
         modalOpen: false,
@@ -440,6 +472,11 @@ export function HomePage({ mailDomain }: HomePageProps) {
           this.localPart = local;
           this.activeMailbox = this.toMailbox(local);
           this.showInbox = true;
+          this.selected = null;
+          this.selectedId = null;
+          this.selectedIsHtml = false;
+          this.selectedPlainText = '';
+          this.clearRenderedHtml();
           this.status = 'Loading inbox...';
           await this.loadEmails();
           this.connectSSE();
@@ -455,10 +492,11 @@ export function HomePage({ mailDomain }: HomePageProps) {
             if (!res.ok) throw new Error(this.getErrorMessage(data, 'Failed to load emails.'));
             if (loadSeq !== this.inboxLoadSeq) return;
             this.emails = Array.isArray(data) ? data : [];
-            if (this.selected) {
-              const matchingEmail = this.emails.find((email) => email.id === this.selected.id);
+            if (this.selectedId) {
+              const matchingEmail = this.emails.find((email) => email.id === this.selectedId);
               if (!matchingEmail) {
                 this.selected = null;
+                this.selectedId = null;
                 this.selectedIsHtml = false;
                 this.selectedPlainText = '';
                 this.clearRenderedHtml();
@@ -481,6 +519,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
           if (!this.activeMailbox) return;
           this.emailLoadSeq += 1;
           const loadSeq = this.emailLoadSeq;
+          this.selectedId = id;
           this.modalOpen = !this.isDesktopLayout;
           this.isEmailLoading = true;
           this.selected = null;
@@ -495,6 +534,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
             if (loadSeq !== this.emailLoadSeq) return;
 
             this.selected = e;
+            this.selectedId = e.id;
             this.selectedPlainText = this.getPlainTextBody(e);
             this.selectedIsHtml = this.hasMeaningfulHtml(e, this.selectedPlainText);
             this.scheduleHtmlRender();
@@ -502,6 +542,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
             if (loadSeq !== this.emailLoadSeq) return;
             this.modalOpen = false;
             this.selected = null;
+            this.selectedId = null;
             this.selectedIsHtml = false;
             this.selectedPlainText = '';
             this.clearRenderedHtml();
@@ -618,8 +659,8 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .status {font-size:.87rem;color:var(--muted);margin-top:.3rem;background:#f8f9ff;border:1px dashed #dce2f7;border-radius:10px;padding:.45rem .6rem; }
     .sidebar { display:grid; gap:1rem; }
     .email-list-wrap { margin-top:0; }
-    .email-list-body { display:grid; gap:.65rem; min-height:0; }
-    .stack-sm { display:grid; gap:.65rem; }
+    .email-list-body { display:grid; gap:.65rem; min-height:0; height:100%; overflow-y:auto; }
+    .stack-sm { display:flex; flex-direction:column; gap:.65rem; min-height:0; }
     .page-main { flex:1; display:grid; gap:1rem; min-height:0; }
     .detail-panel { display:none; }
     .detail-stage { min-height:100%; }
@@ -640,6 +681,13 @@ export function HomePage({ mailDomain }: HomePageProps) {
       border:1px dashed #dce2f7;
       border-radius:18px;
       overflow:hidden;
+    }
+    .detail-welcome {
+      background:
+        radial-gradient(circle at top left, rgba(109, 94, 252, .18) 0%, rgba(109, 94, 252, 0) 36%),
+        radial-gradient(circle at bottom right, rgba(79, 70, 229, .12) 0%, rgba(79, 70, 229, 0) 38%),
+        linear-gradient(180deg, rgba(255,255,255,.94) 0%, rgba(243,246,255,.98) 100%);
+      border-style:solid;
     }
     .detail-empty-art {
       position:relative;
@@ -667,6 +715,21 @@ export function HomePage({ mailDomain }: HomePageProps) {
       max-width:26rem;
       display:grid;
       gap:.45rem;
+    }
+    .detail-welcome-grid {
+      max-width:52rem;
+    }
+    .detail-welcome-art {
+      width:8rem;
+      height:8rem;
+    }
+    .detail-welcome-icon {
+      width:5.5rem;
+      height:5.5rem;
+      font-size:2.3rem;
+      border-radius:1.8rem;
+      background:
+        radial-gradient(circle at 30% 30%, #ffffff 0%, #f5f3ff 46%, #e4e9ff 100%);
     }
     .detail-empty-kicker {
       display:inline-flex;
@@ -722,17 +785,39 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .detail-loading { min-height:100%; }
     .detail-divider { border:0; border-top:1px solid #e9ecf7; margin:1rem 0; }
     .inbox-head { display:flex;justify-content:space-between;align-items:center;margin-bottom:.65rem;color:var(--muted);font-size:.9rem; }
-    .email-item { background:linear-gradient(180deg,#fff 0%,#fdfdff 100%);padding:.95rem 1rem;border-radius:13px;border:1px solid var(--line);cursor:pointer;transition:all .16s ease; }
+    .email-item {
+      display:flex;
+      flex-direction:column;
+      align-items:stretch;
+      gap:.35rem;
+      background:linear-gradient(180deg,#fff 0%,#fdfdff 100%);
+      padding:.95rem 1rem;
+      border-radius:13px;
+      border:1px solid var(--line);
+      cursor:pointer;
+      transition:border-color .16s ease, box-shadow .16s ease, background .16s ease, transform .16s ease;
+      will-change:transform;
+    }
     .email-item:hover { border-color:#c9d0ff;box-shadow:0 10px 24px rgba(79,70,229,.11);transform:translateY(-1px); }
     .email-item.is-active {
       border-color:#98a3ff;
       background:linear-gradient(180deg, #f7f8ff 0%, #eef1ff 100%);
       box-shadow:0 14px 30px rgba(79,70,229,.14);
     }
+    .email-item.is-loading {
+      cursor:progress;
+    }
     .email-row { display:flex;justify-content:space-between;gap:.75rem;align-items:center; }
     .subject { font-weight:600; color:var(--text); }
     .meta { font-size:.82rem; color:var(--muted); }
-    .snippet { margin-top:.35rem;color:#4b5563;font-size:.88rem; }
+    .snippet {
+      margin-top:.1rem;
+      color:#4b5563;
+      font-size:.88rem;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
     .empty-state {
       display:grid;
       place-items:center;

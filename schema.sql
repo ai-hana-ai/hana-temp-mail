@@ -11,4 +11,5 @@ CREATE TABLE IF NOT EXISTS emails (
 );
 
 CREATE INDEX IF NOT EXISTS idx_emails_to ON emails(id_to);
+CREATE INDEX IF NOT EXISTS idx_emails_to_timestamp_id ON emails(id_to, timestamp DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_expires_at ON emails(expires_at);

@@ -14,6 +14,7 @@ type Bindings = { Bindings: Env };
 
 const app = new Hono<Bindings>();
 const rateLimitState = new Map<string, { count: number; resetAt: number }>();
+let nextRateLimitCleanupAt = 0;
 
 const RATE_LIMITS = {
   random: 24,
@@ -64,6 +65,13 @@ function applyRateLimit(c: Context<Bindings>, bucket: keyof typeof RATE_LIMITS) 
   const windowMs = getRateLimitWindowMs(c.env);
   const limit = RATE_LIMITS[bucket];
   const now = Date.now();
+  if (now >= nextRateLimitCleanupAt) {
+    nextRateLimitCleanupAt = now + windowMs;
+    for (const [key, entry] of rateLimitState.entries()) {
+      if (entry.resetAt <= now) rateLimitState.delete(key);
+    }
+  }
+
   const ip = getClientIp(c.req.raw);
   const key = `${bucket}:${ip}`;
   const current = rateLimitState.get(key);
@@ -115,6 +123,31 @@ function getRetentionDays(env: Env): number {
   return 7;
 }
 
+function buildEmailCursor(email?: { timestamp?: string | null; id?: string | null } | null): string {
+  const timestamp = email?.timestamp || '';
+  const id = email?.id || '';
+  return timestamp && id ? `${timestamp}:${id}` : '';
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(true);
+    }, ms);
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(false);
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 async function cleanupExpiredEmails(env: Env) {
   try {
     const result = await env.DB.prepare("DELETE FROM emails WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')").run();
@@ -155,9 +188,9 @@ app.get('/api/emails', async (c) => {
 
   try {
     const { results } = await c.env.DB.prepare(
-      "SELECT id, id_from, subject, timestamp, COALESCE(preview, CASE WHEN trim(coalesce(body_text, '')) != '' THEN substr(trim(body_text), 1, 140) ELSE 'No preview available' END) AS preview FROM emails WHERE lower(id_to) = ? ORDER BY timestamp DESC LIMIT ?"
+      "SELECT id, id_from, subject, timestamp, COALESCE(preview, CASE WHEN trim(coalesce(body_text, '')) != '' THEN substr(trim(body_text), 1, 140) ELSE 'No preview available' END) AS preview FROM emails WHERE id_to = ? ORDER BY timestamp DESC, id DESC LIMIT ?"
     )
-      .bind(mailbox.toLowerCase(), 50)
+      .bind(mailbox, 50)
       .all();
 
     return c.json(results);
@@ -177,8 +210,8 @@ app.get('/api/email/:id', async (c) => {
   }
 
   try {
-    const email = await c.env.DB.prepare('SELECT * FROM emails WHERE id = ? AND lower(id_to) = ?')
-      .bind(id, mailbox.toLowerCase())
+    const email = await c.env.DB.prepare('SELECT * FROM emails WHERE id = ? AND id_to = ?')
+      .bind(id, mailbox)
       .first();
 
     if (!email) return jsonError(c, 404, 'not_found', 'Email not found.');
@@ -197,48 +230,61 @@ app.get('/api/stream', async (c) => {
     return jsonError(c, 400, 'invalid_mailbox', `Missing or invalid \`to\` query parameter. Use @${mailDomain}.`);
   }
 
+  const abortSignal = c.req.raw.signal;
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
       let closed = false;
 
-      const writeEvent = (event: string, data: unknown) => {
+      const closeStream = () => {
         if (closed) return;
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-      };
-
-      writeEvent('ready', { mailbox });
-
-      let lastSeen = '';
-      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-      try {
-        while (!closed) {
-          const latest = await c.env.DB.prepare(
-            'SELECT timestamp FROM emails WHERE lower(id_to) = ? ORDER BY timestamp DESC LIMIT 1'
-          )
-            .bind(mailbox.toLowerCase())
-            .first<{ timestamp: string }>();
-
-          const latestTs = latest?.timestamp || '';
-          if (latestTs && latestTs !== lastSeen) {
-            lastSeen = latestTs;
-            writeEvent('update', { at: latestTs });
-          } else {
-            writeEvent('ping', { t: Date.now() });
-          }
-
-          await sleep(3000);
-        }
-      } catch (error) {
-        console.error('api.stream.failed', { mailbox, error });
-      } finally {
         closed = true;
+        abortSignal?.removeEventListener('abort', closeStream);
         try {
           controller.close();
         } catch {
           // noop
         }
+      };
+
+      const writeEvent = (event: string, data: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          closeStream();
+        }
+      };
+
+      abortSignal?.addEventListener('abort', closeStream, { once: true });
+      writeEvent('ready', { mailbox });
+
+      let lastSeen = '';
+
+      try {
+        while (!closed && !abortSignal?.aborted) {
+          const latest = await c.env.DB.prepare(
+            'SELECT id, timestamp FROM emails WHERE id_to = ? ORDER BY timestamp DESC, id DESC LIMIT 1'
+          )
+            .bind(mailbox)
+            .first<{ id: string; timestamp: string }>();
+
+          const latestCursor = buildEmailCursor(latest);
+          if (latestCursor && latestCursor !== lastSeen) {
+            lastSeen = latestCursor;
+            writeEvent('update', { id: latest?.id, at: latest?.timestamp });
+          } else {
+            writeEvent('ping', { t: Date.now() });
+          }
+
+          if (!(await sleep(3000, abortSignal))) break;
+        }
+      } catch (error) {
+        if (!closed && !abortSignal?.aborted) {
+          console.error('api.stream.failed', { mailbox, error });
+        }
+      } finally {
+        closeStream();
       }
     },
   });

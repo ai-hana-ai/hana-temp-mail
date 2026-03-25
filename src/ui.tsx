@@ -87,6 +87,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
         selectedPlainText: '',
         modalOpen: false,
         eventSource: null,
+        beforeUnloadHandler: null,
         diceRolling: false,
 
         normalizeLocalPart(v) {
@@ -247,10 +248,6 @@ export function HomePage({ mailDomain }: HomePageProps) {
           }
         },
 
-        async init() {
-          await this.generateRandom();
-        },
-
         async generateRandom() {
           if (this.diceRolling) return;
           this.diceRolling = true;
@@ -320,9 +317,15 @@ export function HomePage({ mailDomain }: HomePageProps) {
           if (frame) frame.removeAttribute('srcdoc');
         },
 
+        closeSSE() {
+          if (!this.eventSource) return;
+          this.eventSource.close();
+          this.eventSource = null;
+        },
+
         connectSSE() {
           if (!this.activeMailbox) return;
-          if (this.eventSource) this.eventSource.close();
+          this.closeSSE();
 
           this.eventSource = new EventSource('/api/stream?to=' + encodeURIComponent(this.activeMailbox));
 
@@ -335,8 +338,25 @@ export function HomePage({ mailDomain }: HomePageProps) {
           });
 
           this.eventSource.onerror = () => {
+            if (this.eventSource && this.eventSource.readyState === EventSource.CLOSED) {
+              this.closeSSE();
+            }
             this.status = 'Realtime connection interrupted, reconnecting...';
           };
+        },
+
+        destroy() {
+          this.closeSSE();
+          if (this.beforeUnloadHandler) {
+            window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+            this.beforeUnloadHandler = null;
+          }
+        },
+
+        async init() {
+          this.beforeUnloadHandler = () => this.closeSSE();
+          window.addEventListener('beforeunload', this.beforeUnloadHandler);
+          await this.generateRandom();
         },
       };
     }

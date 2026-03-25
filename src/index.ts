@@ -23,36 +23,36 @@ const RATE_LIMITS = {
   stream: 12,
 } as const;
 
-function getMailDomain(env: Env): string {
+export function getMailDomain(env: Env): string {
   return (env.MAIL_DOMAIN || 'adopsee.com').trim().toLowerCase();
 }
 
-function normalizeMailbox(input: string | null, mailDomain: string): string | null {
+export function normalizeMailbox(input: string | null, mailDomain: string): string | null {
   return normalizeMailboxInput(input, mailDomain);
 }
 
-function randomLocalPart(length = 10): string {
+export function randomLocalPart(length = 10): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => chars[b % chars.length]).join('');
 }
 
-function randomMailbox(mailDomain: string): string {
+export function randomMailbox(mailDomain: string): string {
   return `${randomLocalPart()}@${mailDomain}`;
 }
 
-function jsonError(c: Context<Bindings>, status: number, code: string, message: string) {
+export function jsonError(c: Context<Bindings>, status: number, code: string, message: string) {
   return c.json({ error: message, code }, status);
 }
 
-function getRateLimitWindowMs(env: Env): number {
+export function getRateLimitWindowMs(env: Env): number {
   const raw = Number(env.RATE_LIMIT_WINDOW_MS || '');
   if (Number.isFinite(raw) && raw >= 1000) return raw;
   return 60_000;
 }
 
-function getClientIp(request: Request): string {
+export function getClientIp(request: Request): string {
   const cfIp = request.headers.get('CF-Connecting-IP');
   if (cfIp) return cfIp;
 
@@ -61,7 +61,7 @@ function getClientIp(request: Request): string {
   return 'unknown';
 }
 
-function applyRateLimit(c: Context<Bindings>, bucket: keyof typeof RATE_LIMITS) {
+export function applyRateLimit(c: Context<Bindings>, bucket: keyof typeof RATE_LIMITS) {
   const windowMs = getRateLimitWindowMs(c.env);
   const limit = RATE_LIMITS[bucket];
   const now = Date.now();
@@ -89,7 +89,7 @@ function applyRateLimit(c: Context<Bindings>, bucket: keyof typeof RATE_LIMITS) 
   return jsonError(c, 429, 'rate_limited', 'Too many requests. Please retry shortly.');
 }
 
-function decodeHtmlEntities(value: string): string {
+export function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
@@ -99,7 +99,7 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&#39;/gi, "'");
 }
 
-function stripHtml(value: string): string {
+export function stripHtml(value: string): string {
   return decodeHtmlEntities(
     value
       .replace(/<!--[\s\S]*?-->/g, ' ')
@@ -111,25 +111,25 @@ function stripHtml(value: string): string {
     .trim();
 }
 
-function buildPreview(bodyText: string, bodyHtml: string, maxLength = 140): string {
+export function buildPreview(bodyText: string, bodyHtml: string, maxLength = 140): string {
   const source = (bodyText || '').trim() || stripHtml(bodyHtml || '');
   if (!source) return 'No preview available';
   return source.length > maxLength ? `${source.slice(0, maxLength).trimEnd()}...` : source;
 }
 
-function getRetentionDays(env: Env): number {
+export function getRetentionDays(env: Env): number {
   const raw = Number(env.RETENTION_DAYS || '');
   if (Number.isFinite(raw) && raw >= 1 && raw <= 90) return Math.floor(raw);
   return 7;
 }
 
-function buildEmailCursor(email?: { timestamp?: string | null; id?: string | null } | null): string {
+export function buildEmailCursor(email?: { timestamp?: string | null; id?: string | null } | null): string {
   const timestamp = email?.timestamp || '';
   const id = email?.id || '';
   return timestamp && id ? `${timestamp}:${id}` : '';
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+export function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
   if (signal?.aborted) return Promise.resolve(false);
 
   return new Promise((resolve) => {
@@ -148,7 +148,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
   });
 }
 
-async function cleanupExpiredEmails(env: Env) {
+export async function cleanupExpiredEmails(env: Env) {
   try {
     const result = await env.DB.prepare("DELETE FROM emails WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')").run();
     console.log('cleanup.completed', { deleted: result.meta.changes, retentionDays: getRetentionDays(env) });
@@ -304,7 +304,25 @@ app.get('/', (c) => {
   return c.html(renderHomePage(mailDomain));
 });
 
-export default {
+export function resetRateLimitState(now = 0) {
+  rateLimitState.clear();
+  nextRateLimitCleanupAt = now;
+}
+
+export function getRateLimitStateSnapshot() {
+  return {
+    nextRateLimitCleanupAt,
+    entries: Array.from(rateLimitState.entries()).map(([key, entry]) => ({
+      key,
+      count: entry.count,
+      resetAt: entry.resetAt,
+    })),
+  };
+}
+
+export { RATE_LIMITS, app };
+
+const worker = {
   fetch: app.fetch,
   async scheduled(_controller: ScheduledController, env: Env) {
     await cleanupExpiredEmails(env);
@@ -354,3 +372,5 @@ export default {
     }
   },
 };
+
+export default worker;

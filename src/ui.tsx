@@ -35,8 +35,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
           <span x-text="emails.length + ' message(s)'"></span>
         </div>
 
-        <template x-if="isInboxLoading">
-          <div class="stack-sm">
+        <div x-show="isInboxLoading" x-transition.opacity.duration.150ms class="stack-sm" style="display:none;">
             <template x-for="n in skeletonItems" :key="'email-skeleton-' + n">
               <div class="email-item email-skeleton" aria-hidden="true">
                 <div class="email-row">
@@ -48,28 +47,28 @@ export function HomePage({ mailDomain }: HomePageProps) {
                 <div class="skeleton-line skeleton-snippet short"></div>
               </div>
             </template>
-          </div>
-        </template>
+        </div>
 
-        <template x-if="!isInboxLoading && emails.length === 0">
-          <div class="empty-state">
+        <div x-show="!isInboxLoading && emails.length === 0" x-transition.opacity.duration.150ms class="empty-state" style="display:none;">
             <div class="empty-icon">✉️</div>
             <div class="empty-copy">
               <h3>Inbox masih kosong</h3>
               <p>Belum ada email masuk ke <b x-text="activeMailbox"></b>. Bagikan alamat ini atau tunggu sebentar, inbox akan update otomatis saat pesan baru datang.</p>
             </div>
-          </div>
-        </template>
-        <template x-for="e in visibleEmails" :key="e.id">
-          <div class="email-item" @click="viewEmail(e.id)">
-            <div class="email-row">
-              <div class="subject" x-text="e.subject || '(No Subject)'"></div>
-              <span class="meta" x-text="formatTimestamp(e.timestamp)"></span>
+        </div>
+
+        <div x-show="!isInboxLoading && emails.length > 0" x-transition.opacity.duration.150ms style="display:none;">
+          <template x-for="e in emails" :key="e.id">
+            <div class="email-item" @click="viewEmail(e.id)">
+              <div class="email-row">
+                <div class="subject" x-text="e.subject || '(No Subject)'"></div>
+                <span class="meta" x-text="formatTimestamp(e.timestamp)"></span>
+              </div>
+              <div class="meta" x-text="'From: ' + e.id_from"></div>
+              <div class="snippet" x-text="previewText(e)"></div>
             </div>
-            <div class="meta" x-text="'From: ' + e.id_from"></div>
-            <div class="snippet" x-text="previewText(e)"></div>
-          </div>
-        </template>
+          </template>
+        </div>
       </div>
     </div>
 
@@ -125,10 +124,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
         beforeUnloadHandler: null,
         diceRolling: false,
         skeletonItems: [1, 2, 3],
-
-        get visibleEmails() {
-          return this.isInboxLoading ? [] : this.emails;
-        },
+        inboxLoadSeq: 0,
 
         normalizeLocalPart(v) {
           const val = (v || '').trim().toLowerCase();
@@ -140,6 +136,21 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
         toMailbox(localPart) {
           return localPart + '@' + this.mailDomain;
+        },
+
+        waitForPaint() {
+          return new Promise((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(resolve));
+          });
+        },
+
+        async beginInboxLoad() {
+          this.inboxLoadSeq += 1;
+          const loadSeq = this.inboxLoadSeq;
+          this.isInboxLoading = true;
+          this.emails = [];
+          await this.waitForPaint();
+          return loadSeq;
         },
 
         normalizeSqliteTs(ts) {
@@ -314,22 +325,29 @@ export function HomePage({ mailDomain }: HomePageProps) {
           this.localPart = local;
           this.activeMailbox = this.toMailbox(local);
           this.showInbox = true;
+          this.status = 'Loading inbox...';
           await this.loadEmails();
           this.connectSSE();
         },
 
         async loadEmails() {
           if (!this.activeMailbox) return;
-          this.isInboxLoading = true;
+          const loadSeq = await this.beginInboxLoad();
           try {
             const res = await fetch('/api/emails?to=' + encodeURIComponent(this.activeMailbox));
             const data = await res.json();
             if (!res.ok) throw new Error(this.getErrorMessage(data, 'Failed to load emails.'));
+            if (loadSeq !== this.inboxLoadSeq) return;
             this.emails = Array.isArray(data) ? data : [];
+            await this.waitForPaint();
+            this.status = 'Monitoring: ' + this.activeMailbox + ' (real-time active)';
           } catch (error) {
+            if (loadSeq !== this.inboxLoadSeq) return;
             this.status = error instanceof Error ? error.message : 'Failed to load emails.';
           } finally {
-            this.isInboxLoading = false;
+            if (loadSeq === this.inboxLoadSeq) {
+              this.isInboxLoading = false;
+            }
           }
         },
 

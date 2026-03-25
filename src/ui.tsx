@@ -35,7 +35,8 @@ export function HomePage({ mailDomain }: HomePageProps) {
           <span x-text="emails.length + ' message(s)'"></span>
         </div>
 
-        <div x-show="isInboxLoading" x-transition.opacity.duration.150ms class="stack-sm" style="display:none;">
+        <template x-if="isInboxLoading">
+          <div class="stack-sm">
             <template x-for="n in skeletonItems" :key="'email-skeleton-' + n">
               <div class="email-item email-skeleton" aria-hidden="true">
                 <div class="email-row">
@@ -47,28 +48,33 @@ export function HomePage({ mailDomain }: HomePageProps) {
                 <div class="skeleton-line skeleton-snippet short"></div>
               </div>
             </template>
-        </div>
+          </div>
+        </template>
 
-        <div x-show="!isInboxLoading && emails.length === 0" x-transition.opacity.duration.150ms class="empty-state" style="display:none;">
+        <template x-if="!isInboxLoading && emails.length === 0">
+          <div class="empty-state">
             <div class="empty-icon">✉️</div>
             <div class="empty-copy">
-              <h3>Inbox masih kosong</h3>
-              <p>Belum ada email masuk ke <b x-text="activeMailbox"></b>. Bagikan alamat ini atau tunggu sebentar, inbox akan update otomatis saat pesan baru datang.</p>
+              <h3>Your inbox is empty</h3>
+              <p>No emails have arrived at <b x-text="activeMailbox"></b> yet. Share this address or wait a moment. The inbox refreshes automatically when new messages arrive.</p>
             </div>
-        </div>
+          </div>
+        </template>
 
-        <div x-show="!isInboxLoading && emails.length > 0" x-transition.opacity.duration.150ms style="display:none;">
-          <template x-for="e in emails" :key="e.id">
-            <div class="email-item" @click="viewEmail(e.id)">
-              <div class="email-row">
-                <div class="subject" x-text="e.subject || '(No Subject)'"></div>
-                <span class="meta" x-text="formatTimestamp(e.timestamp)"></span>
+        <template x-if="!isInboxLoading && emails.length > 0">
+          <div>
+            <template x-for="e in emails" :key="e.id">
+              <div class="email-item" @click="viewEmail(e.id)">
+                <div class="email-row">
+                  <div class="subject" x-text="e.subject || '(No Subject)'"></div>
+                  <span class="meta" x-text="formatTimestamp(e.timestamp)"></span>
+                </div>
+                <div class="meta" x-text="'From: ' + e.id_from"></div>
+                <div class="snippet" x-text="previewText(e)"></div>
               </div>
-              <div class="meta" x-text="'From: ' + e.id_from"></div>
-              <div class="snippet" x-text="previewText(e)"></div>
-            </div>
-          </template>
-        </div>
+            </template>
+          </div>
+        </template>
       </div>
     </div>
 

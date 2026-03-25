@@ -203,6 +203,8 @@ describe('worker helpers', () => {
     expect(html).toContain('<!DOCTYPE html>');
     expect(html).toContain('@mail.example');
     expect(html).toContain('mailApp()');
+    expect(html).toContain('Your inbox is empty');
+    expect(html).toContain('<template x-if="isInboxLoading">');
     expect(html).toContain("replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')");
   });
 

@@ -374,7 +374,8 @@ describe('worker helpers', () => {
     expect(html).toContain('email-item email-skeleton');
     expect(html).toContain("replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')");
     expect(html).toContain('const resetSelectedEmail = () => {');
-    expect(html).toContain(".key('inbox-body-' + (activeMailbox || 'closed'))");
+    expect(html).toContain("state.inboxBodyVersion += 1;");
+    expect(html).toContain("const inboxBodyKey = 'inbox-body-' + (activeMailbox || 'closed') + '-' + state.inboxBodyVersion;");
     expect(html).toContain('loadEmails({ mailbox, preserveExisting: true });');
   });
 

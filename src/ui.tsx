@@ -49,6 +49,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       diceRolling: false,
       skeletonItems: [1, 2, 3],
       inboxLoadSeq: 0,
+      inboxBodyVersion: 0,
       emailLoadSeq: 0,
       htmlRenderSeq: 0,
       
@@ -511,6 +512,20 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       }
     );
 
+    watch(
+      () => [
+        state.activeMailbox,
+        state.isInboxLoading,
+        state.selectedId,
+        state.isEmailLoading,
+        state.emails.length,
+        state.emails.map((email) => [email.id, email.timestamp, email.subject, email.preview, email.id_from].join('::')).join('||')
+      ].join('|'),
+      () => {
+        state.inboxBodyVersion += 1;
+      }
+    );
+
     const renderInboxSkeleton = () => html\`
       <div class="stack-sm">
         \${state.skeletonItems.map((n) => html\`
@@ -557,24 +572,32 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       \`.key(email.id);
     };
 
-    const renderInboxList = (emails, selectedId, isEmailLoading) => html\`
-      <div class="stack-sm">
-        \${emails.map((email) => renderInboxEmailItem(email, selectedId, isEmailLoading))}
-      </div>
-    \`;
+    const renderInboxBody = () => {
+      const activeMailbox = state.activeMailbox || '';
+      const isInboxLoading = state.isInboxLoading;
+      const selectedId = state.selectedId;
+      const isEmailLoading = state.isEmailLoading;
+      const emails = Array.isArray(state.emails) ? [...state.emails] : [];
+      const inboxBodyKey = 'inbox-body-' + (activeMailbox || 'closed') + '-' + state.inboxBodyVersion;
 
-            const renderInboxBody = () => html\`
-      <div class=\"inbox-body-content\">
-        \${() => {
-          if (state.isInboxLoading && state.emails.length === 0) {
-            return renderInboxSkeleton();
+      return html\`
+        <div class=\"inbox-body-content\">\${() => {
+          if (isInboxLoading && emails.length === 0) {
+            return renderInboxSkeleton().key(inboxBodyKey + '-skeleton');
           }
-          if (state.emails.length === 0) {
-            return renderInboxEmpty(state.activeMailbox);
+
+          if (emails.length === 0) {
+            return renderInboxEmpty(activeMailbox).key(inboxBodyKey + '-empty');
           }
-          return renderInboxList(state.emails, state.selectedId, state.isEmailLoading);
-        }}
-      </div>\`;
+
+          return html\`
+            <div class=\"stack-sm\">
+              \${emails.map((email) => renderInboxEmailItem(email, selectedId, isEmailLoading))}
+            </div>
+          \`.key(inboxBodyKey + '-list');
+        }}</div>
+      \`.key(inboxBodyKey);
+    };
 
     const renderDesktopDetail = () => {
       if (!state.showInbox) {

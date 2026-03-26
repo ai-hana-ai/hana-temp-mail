@@ -563,18 +563,16 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       </div>
     \`;
 
-        const renderInboxBody = () => html\`
+            const renderInboxBody = () => html\`
       <div class=\"inbox-body-content\">
         \${() => {
-          const emails = state.emails;
-          const loading = state.isInboxLoading;
-          if (loading && emails.length === 0) {
+          if (state.isInboxLoading && state.emails.length === 0) {
             return renderInboxSkeleton();
           }
-          if (emails.length === 0) {
+          if (state.emails.length === 0) {
             return renderInboxEmpty(state.activeMailbox);
           }
-          return renderInboxList(emails, state.selectedId, state.isEmailLoading);
+          return renderInboxList(state.emails, state.selectedId, state.isEmailLoading);
         }}
       </div>\`;
 

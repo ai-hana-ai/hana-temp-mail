@@ -374,8 +374,10 @@ describe('worker helpers', () => {
     expect(html).toContain('email-item email-skeleton');
     expect(html).toContain("replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')");
     expect(html).toContain('const resetSelectedEmail = () => {');
-    expect(html).toContain("state.inboxBodyVersion += 1;");
-    expect(html).toContain("const inboxBodyKey = 'inbox-body-' + (activeMailbox || 'closed') + '-' + state.inboxBodyVersion;");
+    expect(html).toContain("const renderInboxList = () => html`");
+    expect(html).toContain("${() => state.emails.map((email) => renderInboxEmailItem(email))}");
+    expect(html).toContain("if (state.isInboxLoading && state.emails.length === 0) {");
+    expect(html).toContain("return renderInboxEmpty().key('inbox-body-' + (state.activeMailbox || 'closed') + '-empty');");
     expect(html).toContain("const cancelInboxLoad = () => {");
     expect(html).toContain('signal: controller.signal');
     expect(html).toContain("updateInboxStatus('Realtime connected for ' + mailbox + '. Monitoring incoming mail...', mailbox, activateInboxSeq);");

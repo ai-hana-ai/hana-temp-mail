@@ -66,6 +66,20 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
 
+    const syncLocalPart = (value) => {
+      const nextLocalPart = String(value || '').toLowerCase();
+      state.localPart = nextLocalPart;
+      return nextLocalPart;
+    };
+
+    const getMailboxInputValue = () => {
+      const input = document.getElementById('mailbox-local-part-input');
+      if (input instanceof HTMLInputElement) {
+        return syncLocalPart(input.value);
+      }
+      return state.localPart;
+    };
+
     const normalizeLocalPart = (value) => {
       const normalized = (value || '').trim().toLowerCase();
       if (!normalized) return null;
@@ -376,7 +390,15 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       if (!mailbox) return;
       if (state.auth.enabled && !state.auth.authenticated) return;
       
-      const preserveExisting = Boolean(options && options.preserveExisting);
+      const previousMailbox = typeof options?.previousMailbox === 'string' ? options.previousMailbox : state.activeMailbox;
+      const resetForMailboxChange = Boolean(options?.resetForMailboxChange) || (Boolean(previousMailbox) && previousMailbox !== mailbox);
+      const preserveExisting = !resetForMailboxChange && Boolean(options && options.preserveExisting);
+
+      if (resetForMailboxChange) {
+        resetSelectedEmail();
+        state.emails = [];
+      }
+
       const loadSeq = await beginInboxLoad(preserveExisting);
       try {
         const response = await fetch('/api/emails?to=' + encodeURIComponent(mailbox));
@@ -437,27 +459,29 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
     };
 
     const activateInbox = async () => {
-      const local = normalizeLocalPart(state.localPart);
+      const rawLocalPart = getMailboxInputValue();
+      const local = normalizeLocalPart(rawLocalPart);
       if (!local) {
         alert('Please input email name only (without @), e.g. john.doe');
         return;
       }
 
       const newMailbox = toMailbox(local);
-      const isRefresh = state.showInbox && state.activeMailbox === newMailbox;
+      const previousMailbox = state.activeMailbox;
+      const isRefresh = state.showInbox && previousMailbox === newMailbox;
 
       closeSSE();
       state.localPart = local;
       state.activeMailbox = newMailbox;
       state.showInbox = true;
-      
-      if (!isRefresh) {
-        resetSelectedEmail();
-        state.emails = [];
-      }
-      
+
       state.status = isRefresh ? 'Refreshing inbox...' : 'Loading inbox...';
-      loadEmails({ mailbox: newMailbox, preserveExisting: isRefresh });
+      loadEmails({
+        mailbox: newMailbox,
+        preserveExisting: isRefresh,
+        previousMailbox,
+        resetForMailboxChange: !isRefresh,
+      });
       connectSSE(newMailbox);
     };
 
@@ -754,11 +778,15 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
                 <div class=\"selector\">
                   <div class=\"input-wrap multi-domain\">
                     <input
+                      id=\"mailbox-local-part-input\"
                       type=\"text\"
                       placeholder=\"email name\"
                       .value=\"\${() => state.localPart}\"
                       @input=\"\${(event) => {
-                        state.localPart = String(event.currentTarget?.value || '').toLowerCase();
+                        syncLocalPart(event.target?.value);
+                      }}\"
+                      @change=\"\${(event) => {
+                        syncLocalPart(event.target?.value);
                       }}\"
                     />
                     <div class=\"domain-select-wrap\">

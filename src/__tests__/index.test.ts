@@ -9,7 +9,8 @@ import worker, {
   decodeBase64Url,
   decodeHtmlEntities,
   getClientIp,
-  getMailDomain,
+  getMailDomains,
+  getPrimaryMailDomain,
   getRateLimitStateSnapshot,
   getRateLimitWindowMs,
   getRetentionDays,
@@ -38,6 +39,7 @@ type EmailRow = {
 type FakeEnv = {
   DB: FakeD1Database;
   MAIL_DOMAIN?: string;
+  MAIL_DOMAINS?: string;
   RETENTION_DAYS?: string;
   RATE_LIMIT_WINDOW_MS?: string;
   ENABLE_PASSKEY?: string;
@@ -333,6 +335,7 @@ function makeEnv(overrides: Partial<FakeEnv> = {}): FakeEnv {
   return {
     DB: overrides.DB ?? new FakeD1Database(),
     MAIL_DOMAIN: overrides.MAIL_DOMAIN ?? 'adopsee.com',
+    MAIL_DOMAINS: overrides.MAIL_DOMAINS,
     RETENTION_DAYS: overrides.RETENTION_DAYS,
     RATE_LIMIT_WINDOW_MS: overrides.RATE_LIMIT_WINDOW_MS,
     ENABLE_PASSKEY: overrides.ENABLE_PASSKEY,
@@ -373,11 +376,11 @@ describe('worker helpers', () => {
   });
 
   it('covers pure helper branches', async () => {
-    expect(getMailDomain(makeEnv())).toBe('adopsee.com');
-    expect(getMailDomain(makeEnv({ MAIL_DOMAIN: ' Mail.Example ' }))).toBe('mail.example');
+    expect(getMailDomains(makeEnv())).toEqual(['adopsee.com']);
+    expect(getMailDomains(makeEnv({ MAIL_DOMAIN: ' Mail.Example ' }))).toEqual(['mail.example']);
 
-    expect(normalizeMailbox(' Hana ', 'adopsee.com')).toBe('hana@adopsee.com');
-    expect(normalizeMailbox(null, 'adopsee.com')).toBeNull();
+    expect(normalizeMailbox(' Hana ', ['adopsee.com'])).toBe('hana@adopsee.com');
+    expect(normalizeMailbox(null, ['adopsee.com'])).toBeNull();
 
     expect(getRateLimitWindowMs(makeEnv())).toBe(60_000);
     expect(getRateLimitWindowMs(makeEnv({ RATE_LIMIT_WINDOW_MS: '5000' }))).toBe(5000);
@@ -493,8 +496,21 @@ describe('HTTP routes', () => {
     const data = await response.json<{ mailbox: string; domain: string }>();
 
     expect(response.status).toBe(200);
-    expect(data.domain).toBe('box.test');
+    expect(data.domains).toContain('box.test');
     expect(data.mailbox).toMatch(/^[a-z0-9]{10}@box\.test$/);
+  });
+
+  it('returns a random mailbox for the requested allowed domain', async () => {
+    const response = await request(
+      '/api/mailbox/random?domain=pringgo.dev',
+      makeEnv({ MAIL_DOMAINS: 'adopsee.com, pringgo.dev' })
+    );
+    const data = await response.json<{ mailbox: string; domain: string; domains: string[] }>();
+
+    expect(response.status).toBe(200);
+    expect(data.domain).toBe('pringgo.dev');
+    expect(data.domains).toEqual(['adopsee.com', 'pringgo.dev']);
+    expect(data.mailbox).toMatch(/^[a-z0-9]{10}@pringgo\.dev$/);
   });
 
   it('lists inbox emails and validates mailbox input', async () => {

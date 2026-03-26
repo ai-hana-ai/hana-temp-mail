@@ -5,10 +5,11 @@ import { mailboxLocalPartPattern } from './validation';
 
 type HomePageProps = {
   mailDomain: string;
+  mailDomains: string[];
   passkeyEnabled?: boolean;
 };
 
-export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) {
+export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: HomePageProps) {
   const mailboxLocalPartRegexSource = mailboxLocalPartPattern.source;
   const appScript = `
     import { html, reactive, watch } from 'https://esm.sh/@arrow-js/core';
@@ -18,8 +19,10 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
     } from 'https://esm.sh/@simplewebauthn/browser';
 
     const mailDomain = ${JSON.stringify(mailDomain)};
+    const availableMailDomains = ${JSON.stringify(mailDomains)};
     const passkeyEnabled = ${JSON.stringify(passkeyEnabled)};
     const mailboxLocalPartPattern = new RegExp(${JSON.stringify(mailboxLocalPartRegexSource)});
+    const defaultMailDomain = availableMailDomains[0] || mailDomain;
     const root = document.getElementById('app');
 
     if (!root) {
@@ -28,6 +31,8 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
 
     const state = reactive({
       localPart: '',
+      selectedDomain: defaultMailDomain,
+      availableDomains: availableMailDomains,
       status: 'Ready.',
       showInbox: false,
       activeMailbox: '',
@@ -67,7 +72,7 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
       return normalized;
     };
 
-    const toMailbox = (localPart) => localPart + '@' + mailDomain;
+    const toMailbox = (localPart) => localPart + '@' + (state.selectedDomain || defaultMailDomain);
 
     const normalizeSqliteTs = (ts) => {
       if (!ts) return '';
@@ -262,10 +267,15 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
       if (state.diceRolling) return;
       state.diceRolling = true;
       try {
-        const response = await fetch('/api/mailbox/random');
+        const selectedDom = state.selectedDomain || defaultMailDomain;
+        const response = await fetch('/api/mailbox/random?domain=' + encodeURIComponent(selectedDom));
         const data = await response.json();
         if (!response.ok) throw new Error(getErrorMessage(data, 'Failed to generate random inbox.'));
-        state.localPart = (data.mailbox || '').split('@')[0] || '';
+        const [localPart = '', respDomain = ''] = String(data.mailbox || '').split('@');
+        state.localPart = localPart;
+        if (respDomain && state.availableDomains.includes(respDomain)) {
+          state.selectedDomain = respDomain;
+        }
       } catch (error) {
         state.status = error instanceof Error ? error.message : 'Failed to generate random inbox.';
       } finally {
@@ -685,7 +695,7 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
             <aside class=\"sidebar\">
               <div class=\"card\">
                 <div class=\"selector\">
-                  <div class=\"input-wrap\">
+                  <div class=\"input-wrap multi-domain\">
                     <input
                       type=\"text\"
                       placeholder=\"email name\"
@@ -694,7 +704,17 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
                         state.localPart = String(event.currentTarget?.value || '').toLowerCase();
                       }}\"
                     />
-                    <span class=\"domain-suffix\">@\${mailDomain}</span>
+                    <div class=\"domain-select-wrap\">
+                      <span class=\"domain-at\">@</span>
+                      <select 
+                        class=\"domain-select\"
+                        @change=\"\${(e) => { state.selectedDomain = e.target.value; }}\"
+                      >
+                        \${() => state.availableDomains.map((d) => html\`
+                          <option value="\${d}" .selected="\${d === state.selectedDomain}">\${d}</option>
+                        \`)}
+                      </select>
+                    </div>
                     <button
                       class=\"\${() => state.diceRolling ? 'dice-btn is-rolling' : 'dice-btn'}\"
                       disabled=\"\${() => state.diceRolling || false}\"
@@ -802,14 +822,84 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
     .hero-badge { display:inline-flex;align-items:center;gap:.4rem;background:rgba(109, 94, 252, .1);color:#4f46e5;border:1px solid rgba(109, 94, 252, .18);border-radius:999px;padding:.25rem .65rem;font-size:.75rem;font-weight:700;margin:0 auto .55rem; }
     .card { width:100%;max-width:100%;background:linear-gradient(180deg, #fff 0%, #fcfcff 100%);border:1px solid var(--line);border-radius:16px;padding:1rem;box-shadow:0 10px 26px rgba(23,34,74,.07),0 1px 0 rgba(255,255,255,.8) inset; }
     .selector { display:grid; gap:.7rem; }
-    .input-wrap { position:relative; }
-    input[type=\"text\"] { width:100%;padding:.72rem 8.8rem .72rem .78rem;border-radius:10px;border:1px solid #d8deea;font-size:.95rem;outline:none;text-transform:lowercase; }
+    .input-wrap.multi-domain {
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) auto auto;
+      align-items:stretch;
+      gap:0;
+      border:1px solid #d8deea;
+      border-radius:10px;
+      background:#fff;
+      overflow:hidden;
+    }
+    .input-wrap.multi-domain:focus-within {
+      border-color:#b5c3ff;
+      box-shadow:0 0 0 3px #eef1ff;
+    }
+    .input-wrap.multi-domain input {
+      width:100%;
+      min-width:0;
+      border:none;
+      background:transparent;
+      padding:.82rem .9rem;
+      font-size:.95rem;
+      outline:none;
+      text-transform:lowercase;
+    }
+    .domain-select-wrap {
+      display:flex;
+      align-items:center;
+      gap:.1rem;
+      padding:0 .75rem;
+      border-left:none;
+      background:transparent;
+    }
+    .domain-at { color:#7b8197; font-size:.92rem; font-weight:600; }
+    .domain-select {
+      border:none;
+      background:transparent;
+      color:#1f2937;
+      font-weight:600;
+      font-size:.92rem;
+      outline:none;
+      cursor:pointer;
+      padding:.82rem 1.35rem .82rem .1rem;
+      appearance:none;
+      -webkit-appearance:none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, #7b8197 50%),
+        linear-gradient(135deg, #7b8197 50%, transparent 50%);
+      background-position:
+        calc(100% - 11px) calc(50% - 1px),
+        calc(100% - 6px) calc(50% - 1px);
+      background-size:5px 5px, 5px 5px;
+      background-repeat:no-repeat;
+    }
+    input[type=\"text\"] { width:100%;padding:.72rem .78rem;border-radius:10px;border:1px solid #d8deea;font-size:.95rem;outline:none;text-transform:lowercase; }
     input[type=\"text\"]:focus { border-color:#b5c3ff; box-shadow:0 0 0 3px #eef1ff; }
-    .domain-suffix { position:absolute;right:2.9rem;top:50%;transform:translateY(-50%);color:#7b8197;font-size:.9rem;pointer-events:none; }
-    .dice-btn { position:absolute;right:7px;top:50%;transform:translateY(-50%);border:0;background:transparent;box-shadow:none;cursor:pointer;font-size:1rem;line-height:1;width:1.95rem;height:1.95rem;display:inline-flex;align-items:center;justify-content:center;border-radius:8px; }
-    .dice-btn:hover { background:transparent;transform:translateY(-50%); }
+    .dice-btn {
+      position:relative;
+      align-self:center;
+      justify-self:center;
+      margin-right:.45rem;
+      border:none;
+      background:transparent;
+      color:#7b8197;
+      box-shadow:none;
+      cursor:pointer;
+      font-size:1rem;
+      line-height:1;
+      width:2.2rem;
+      height:2.2rem;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:10px;
+      padding:0;
+    }
+    .dice-btn:hover { background:rgba(0,0,0,.04); transform:none; }
     .dice-btn.is-rolling { animation:dice-spin 700ms linear infinite; }
-    @keyframes dice-spin { 0% { transform: translateY(-50%) rotate(0deg); } 100% { transform: translateY(-50%) rotate(360deg); } }
+    @keyframes dice-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     button { background:linear-gradient(135deg,var(--accent) 0%,var(--accent-2) 100%);color:#fff;border:none;padding:.72rem .95rem;border-radius:11px;cursor:pointer;font-weight:700;letter-spacing:.01em;box-shadow:0 8px 20px rgba(109, 94, 252, .28); }
     button:hover { filter:brightness(1.02);transform:translateY(-.5px); }
     .status {font-size:.87rem;color:var(--muted);margin-top:.3rem;background:#f8f9ff;border:1px dashed #dce2f7;border-radius:10px;padding:.45rem .6rem; }
@@ -978,9 +1068,8 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
     .email-item .meta {
       display:block;
       min-width:0;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
+      white-space:normal;
+      word-break:break-word;
     }
     .meta { font-size:.82rem; color:var(--muted); }
     .snippet {
@@ -1191,6 +1280,21 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
   );
 }
 
-export function renderHomePage(mailDomain: string, options: { passkeyEnabled?: boolean } = {}) {
-  return '<!DOCTYPE html>' + <HomePage mailDomain={mailDomain} passkeyEnabled={options.passkeyEnabled} />;
+export function renderHomePage(
+  mailDomain: string,
+  mailDomainsOrOptions: string[] | { passkeyEnabled?: boolean } = {},
+  maybeOptions: { passkeyEnabled?: boolean } = {}
+) {
+  const mailDomains = Array.isArray(mailDomainsOrOptions)
+    ? (mailDomainsOrOptions.length > 0 ? mailDomainsOrOptions : [mailDomain])
+    : [mailDomain];
+  const options = Array.isArray(mailDomainsOrOptions) ? maybeOptions : mailDomainsOrOptions;
+
+  return '<!DOCTYPE html>' + (
+    <HomePage
+      mailDomain={mailDomain}
+      mailDomains={mailDomains}
+      passkeyEnabled={options.passkeyEnabled}
+    />
+  );
 }

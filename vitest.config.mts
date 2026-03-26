@@ -8,6 +8,9 @@ export default defineWorkersConfig({
         wrangler: {
           configPath: './wrangler.toml',
         },
+        miniflare: {
+          compatibilityDate: '2024-03-23',
+        },
       },
     },
     coverage: {

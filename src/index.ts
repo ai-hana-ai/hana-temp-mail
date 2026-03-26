@@ -11,6 +11,7 @@ import { normalizeMailboxInput } from './validation';
 
 export interface Env {
   DB: D1Database;
+  MAIL_DOMAINS?: string;
   MAIL_DOMAIN?: string;
   RETENTION_DAYS?: string;
   RATE_LIMIT_WINDOW_MS?: string;
@@ -70,8 +71,13 @@ const RATE_LIMITS = {
   auth: 30,
 } as const;
 
-export function getMailDomain(env: Env): string {
-  return (env.MAIL_DOMAIN || 'adopsee.com').trim().toLowerCase();
+export function getMailDomains(env: Env): string[] {
+  const raw = env.MAIL_DOMAINS || env.MAIL_DOMAIN || 'adopsee.com';
+  return raw.split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+}
+
+export function getPrimaryMailDomain(env: Env): string {
+  return getMailDomains(env)[0] || 'adopsee.com';
 }
 
 export function isPasskeyEnabled(env: Env): boolean {
@@ -95,8 +101,23 @@ export function getPasskeyOrigin(requestUrl: string): string {
   return new URL(requestUrl).origin;
 }
 
-export function normalizeMailbox(input: string | null, mailDomain: string): string | null {
-  return normalizeMailboxInput(input, mailDomain);
+export function normalizeMailbox(input: string | null, mailDomains: string[]): string | null {
+  if (!input) return null;
+  
+  const value = input.trim().toLowerCase();
+  
+  // Backward compatibility: If no @domain, assume primary domain
+  if (!value.includes('@')) {
+    const primaryDomain = mailDomains[0] || 'adopsee.com';
+    return normalizeMailboxInput(value, primaryDomain);
+  }
+
+  const parts = value.split('@');
+  if (parts.length !== 2) return null;
+  const [local, domain] = parts;
+  
+  if (!mailDomains.includes(domain)) return null;
+  return normalizeMailboxInput(local, domain);
 }
 
 export function randomLocalPart(length = 10): string {
@@ -326,7 +347,7 @@ async function findCredentialByCredentialId(env: Env, credentialId: string) {
 async function storeChallenge(
   env: Env,
   userId: string,
-  mailbox: string,
+  mailbox: string | null,
   flow: 'registration' | 'authentication',
   challenge: string
 ) {
@@ -350,7 +371,7 @@ async function deleteChallenge(env: Env, challengeId: string) {
   await env.DB.prepare('DELETE FROM auth_challenges WHERE id = ?').bind(challengeId).run();
 }
 
-async function setSessionCookie(c: Context<Bindings>, userId: string, mailbox: string) {
+async function setSessionCookie(c: Context<Bindings>, userId: string, mailbox: string | null) {
   const token = randomBase64Url(32);
   const tokenHash = await sha256Hex(token);
   const ttlHours = getSessionTtlHours(c.env);
@@ -495,8 +516,13 @@ app.onError((error, c) => {
 });
 
 app.get('/api/mailbox/random', (c) => {
-  const mailDomain = getMailDomain(c.env);
-  return c.json({ mailbox: randomMailbox(mailDomain), domain: mailDomain });
+  const mailDomains = getMailDomains(c.env);
+  const requestedDomain = String(c.req.query('domain') || '').trim().toLowerCase();
+  const selectedDomain = mailDomains.includes(requestedDomain)
+    ? requestedDomain
+    : getPrimaryMailDomain(c.env);
+
+  return c.json({ mailbox: randomMailbox(selectedDomain), domains: mailDomains, domain: selectedDomain });
 });
 
 app.get('/api/auth/status', async (c) => {
@@ -658,8 +684,8 @@ app.post('/api/auth/login/verify', async (c) => {
     expectedRPID: getPasskeyRpID(c.env, c.req.url),
     requireUserVerification: false,
     credential: {
-      id: decodeBase64Url(storedCredential.credential_id),
-      publicKey: decodeBase64Url(storedCredential.public_key),
+      id: normalizeBase64UrlValue(storedCredential.credential_id),
+      publicKey: decodeBase64Url(normalizeBase64UrlValue(storedCredential.public_key)),
       counter: storedCredential.counter,
       transports: readTransportList(storedCredential.transports),
     },
@@ -693,10 +719,10 @@ app.post('/api/auth/logout', async (c) => {
 });
 
 app.get('/api/emails', async (c) => {
-  const mailDomain = getMailDomain(c.env);
-  const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomain);
+  const mailDomains = getMailDomains(c.env);
+  const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomains);
   if (!mailbox) {
-    return jsonError(c, 400, 'invalid_mailbox', `Query parameter \`to\` must be a valid mailbox for @${mailDomain}.`);
+    return jsonError(c, 400, 'invalid_mailbox', `Query parameter \`to\` must be a valid mailbox for supported domains.`);
   }
 
   try {
@@ -715,11 +741,11 @@ app.get('/api/emails', async (c) => {
 
 app.get('/api/email/:id', async (c) => {
   const id = c.req.param('id');
-  const mailDomain = getMailDomain(c.env);
-  const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomain);
+  const mailDomains = getMailDomains(c.env);
+  const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomains);
 
   if (!id || !mailbox) {
-    return jsonError(c, 400, 'invalid_request', `Email id and query parameter \`to\` (@${mailDomain}) are required.`);
+    return jsonError(c, 400, 'invalid_request', `Email id and query parameter \`to\` are required.`);
   }
 
   try {
@@ -734,11 +760,11 @@ app.get('/api/email/:id', async (c) => {
 });
 
 app.get('/api/stream', async (c) => {
-  const mailDomain = getMailDomain(c.env);
-  const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomain);
+  const mailDomains = getMailDomains(c.env);
+  const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomains);
 
   if (!mailbox) {
-    return jsonError(c, 400, 'invalid_mailbox', `Missing or invalid \`to\` query parameter. Use @${mailDomain}.`);
+    return jsonError(c, 400, 'invalid_mailbox', `Missing or invalid \`to\` query parameter.`);
   }
 
   const abortSignal = c.req.raw.signal;
@@ -811,8 +837,9 @@ app.get('/api/stream', async (c) => {
 });
 
 app.get('/', (c) => {
-  const mailDomain = getMailDomain(c.env);
-  return c.html(renderHomePage(mailDomain, { passkeyEnabled: isPasskeyEnabled(c.env) }));
+  const mailDomains = getMailDomains(c.env);
+  const primaryDomain = getPrimaryMailDomain(c.env);
+  return c.html(renderHomePage(primaryDomain, mailDomains, { passkeyEnabled: isPasskeyEnabled(c.env) }));
 });
 
 export function resetRateLimitState(now = 0) {
@@ -840,8 +867,8 @@ const worker = {
     await cleanupExpiredAuthArtifacts(env);
   },
   async email(message: ForwardableEmailMessage, env: Env) {
-    const mailDomain = getMailDomain(env);
-    const normalizedTo = normalizeMailbox(message.to || '', mailDomain);
+    const mailDomains = getMailDomains(env);
+    const normalizedTo = normalizeMailbox(message.to || '', mailDomains);
     if (!normalizedTo) {
       console.warn('email.rejected.invalid_recipient', { to: message.to });
       return;

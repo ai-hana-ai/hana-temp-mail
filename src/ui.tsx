@@ -5,14 +5,20 @@ import { mailboxLocalPartPattern } from './validation';
 
 type HomePageProps = {
   mailDomain: string;
+  passkeyEnabled?: boolean;
 };
 
-export function HomePage({ mailDomain }: HomePageProps) {
+export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) {
   const mailboxLocalPartRegexSource = mailboxLocalPartPattern.source;
   const appScript = `
     import { html, reactive, watch } from 'https://esm.sh/@arrow-js/core';
+    import { 
+      startRegistration, 
+      startAuthentication 
+    } from 'https://esm.sh/@simplewebauthn/browser';
 
     const mailDomain = ${JSON.stringify(mailDomain)};
+    const passkeyEnabled = ${JSON.stringify(passkeyEnabled)};
     const mailboxLocalPartPattern = new RegExp(${JSON.stringify(mailboxLocalPartRegexSource)});
     const root = document.getElementById('app');
 
@@ -39,6 +45,13 @@ export function HomePage({ mailDomain }: HomePageProps) {
       skeletonItems: [1, 2, 3],
       inboxLoadSeq: 0,
       emailLoadSeq: 0,
+      
+      // Auth State
+      authStatus: {
+        hasPasskey: false,
+        authenticated: !passkeyEnabled,
+        loading: false
+      }
     });
 
     const waitForPaint = () => new Promise((resolve) => {
@@ -176,15 +189,15 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
     const buildHtmlDocument = (emailHtml) => {
       const sanitized = sanitizeEmailHtml(emailHtml);
-      const body = sanitized || '<p style="font-family: ui-sans-serif, system-ui, sans-serif; color: #475467;">HTML body was empty after sanitization.</p>';
+      const body = sanitized || '<p style=\"font-family: ui-sans-serif, system-ui, sans-serif; color: #475467;\">HTML body was empty after sanitization.</p>';
       return [
         '<!DOCTYPE html>',
-        '<html lang="en">',
+        '<html lang=\"en\">',
         '<head>',
-        '<meta charset="utf-8">',
-        '<meta http-equiv="Content-Security-Policy" content="default-src \\'none\\'; img-src data: http: https: cid:; media-src data: http: https:; style-src \\'unsafe-inline\\'; font-src data: http: https:; frame-src http: https:; connect-src \\'none\\'; script-src \\'none\\'; base-uri \\'none\\'; form-action \\'none\\'">',
-        '<meta name="referrer" content="no-referrer">',
-        '<base target="_blank">',
+        '<meta charset=\"utf-8\">',
+        '<meta http-equiv=\"Content-Security-Policy\" content=\"default-src \\\'none\\\'; img-src data: http: https: cid:; media-src data: http: https:; style-src \\\'unsafe-inline\\\'; font-src data: http: https:; frame-src http: https:; connect-src \\\'none\\\'; script-src \\\'none\\\'; base-uri \\\'none\\\'; form-action \\\'none\\\'\">',
+        '<meta name=\"referrer\" content=\"no-referrer\">',
+        '<base target=\"_blank\">',
         '<style>html,body{margin:0;padding:0;background:#fff;color:#111827}body{padding:16px;font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}img{max-width:100%;height:auto}pre{white-space:pre-wrap;word-break:break-word}</style>',
         '</head>',
         '<body>',
@@ -252,7 +265,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
         const data = await response.json();
         if (!response.ok) throw new Error(getErrorMessage(data, 'Failed to generate random inbox.'));
         state.localPart = (data.mailbox || '').split('@')[0] || '';
-        state.status = 'Random inbox ready. Click "Open Inbox" to start monitoring.';
+        state.status = 'Random inbox ready. Click \"Open Inbox\" to start monitoring.';
       } catch (error) {
         state.status = error instanceof Error ? error.message : 'Failed to generate random inbox. Please retry.';
       } finally {
@@ -260,8 +273,86 @@ export function HomePage({ mailDomain }: HomePageProps) {
       }
     };
 
+    const checkAuthStatus = async (mailbox) => {
+      if (!passkeyEnabled) return;
+      state.authStatus.loading = true;
+      try {
+        const response = await fetch('/api/auth/status?to=' + encodeURIComponent(mailbox));
+        const data = await response.json();
+        if (response.ok) {
+          state.authStatus.hasPasskey = data.hasPasskey;
+          state.authStatus.authenticated = data.authenticated;
+        }
+      } catch (error) {
+        console.error('Auth status check failed', error);
+      } finally {
+        state.authStatus.loading = false;
+      }
+    };
+
+    const handleRegisterPasskey = async () => {
+      if (state.authStatus.loading) return;
+      state.authStatus.loading = true;
+      try {
+        const optionsResponse = await fetch('/api/auth/register/options', {
+          method: 'POST',
+          body: JSON.stringify({ mailbox: state.activeMailbox })
+        });
+        const optionsData = await optionsResponse.json();
+        if (!optionsResponse.ok) throw new Error(getErrorMessage(optionsData, 'Failed to start registration.'));
+
+        const credential = await startRegistration({ optionsJSON: optionsData.options });
+        const verifyResponse = await fetch('/api/auth/register/verify', {
+          method: 'POST',
+          body: JSON.stringify({ mailbox: state.activeMailbox, response: credential })
+        });
+        const verifyData = await verifyResponse.json();
+        if (!verifyResponse.ok) throw new Error(getErrorMessage(verifyData, 'Failed to verify registration.'));
+
+        state.authStatus.hasPasskey = true;
+        state.authStatus.authenticated = true;
+        loadEmails();
+        connectSSE();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Passkey registration failed.');
+      } finally {
+        state.authStatus.loading = false;
+      }
+    };
+
+    const handleLoginPasskey = async () => {
+      if (state.authStatus.loading) return;
+      state.authStatus.loading = true;
+      try {
+        const optionsResponse = await fetch('/api/auth/login/options', {
+          method: 'POST',
+          body: JSON.stringify({ mailbox: state.activeMailbox })
+        });
+        const optionsData = await optionsResponse.json();
+        if (!optionsResponse.ok) throw new Error(getErrorMessage(optionsData, 'Failed to start authentication.'));
+
+        const credential = await startAuthentication({ optionsJSON: optionsData.options });
+        const verifyResponse = await fetch('/api/auth/login/verify', {
+          method: 'POST',
+          body: JSON.stringify({ mailbox: state.activeMailbox, response: credential })
+        });
+        const verifyData = await verifyResponse.json();
+        if (!verifyResponse.ok) throw new Error(getErrorMessage(verifyData, 'Failed to verify passkey.'));
+
+        state.authStatus.authenticated = true;
+        loadEmails();
+        connectSSE();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Passkey login failed.');
+      } finally {
+        state.authStatus.loading = false;
+      }
+    };
+
     const loadEmails = async (options = {}) => {
       if (!state.activeMailbox) return;
+      if (passkeyEnabled && !state.authStatus.authenticated) return;
+      
       const preserveExisting = Boolean(options && options.preserveExisting);
       const loadSeq = await beginInboxLoad(preserveExisting);
       try {
@@ -301,6 +392,7 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
     const connectSSE = () => {
       if (!state.activeMailbox) return;
+      if (passkeyEnabled && !state.authStatus.authenticated) return;
       closeSSE();
 
       const eventSource = new EventSource('/api/stream?to=' + encodeURIComponent(state.activeMailbox));
@@ -337,9 +429,23 @@ export function HomePage({ mailDomain }: HomePageProps) {
       state.selectedIsHtml = false;
       state.selectedPlainText = '';
       clearRenderedHtml();
-      state.status = 'Loading inbox...';
-      await loadEmails();
-      connectSSE();
+      
+      if (passkeyEnabled) {
+        state.status = 'Checking authorization...';
+        await checkAuthStatus(state.activeMailbox);
+        if (state.authStatus.authenticated) {
+          state.status = 'Loading inbox...';
+          await loadEmails();
+          connectSSE();
+        } else {
+          state.status = state.authStatus.hasPasskey ? 'Passkey required' : 'Setup required';
+          closeSSE();
+        }
+      } else {
+        state.status = 'Loading inbox...';
+        await loadEmails();
+        connectSSE();
+      }
     };
 
     const viewEmail = async (id) => {
@@ -394,18 +500,50 @@ export function HomePage({ mailDomain }: HomePageProps) {
     );
 
     const renderInboxBody = () => {
+      if (passkeyEnabled && !state.authStatus.authenticated) {
+        if (state.authStatus.loading) {
+          return html\`<div class=\"empty-state empty-state-compact\"><p>Verifying access...</p></div>\`;
+        }
+        
+        if (!state.authStatus.hasPasskey) {
+          return html\`
+            <div class=\"empty-state\">
+              <div class=\"empty-icon\">🔐</div>
+              <div class=\"empty-copy\">
+                <h3>Setup Passkey</h3>
+                <p>This inbox needs a passkey for protection. Tap below to create one for <b>\${() => state.activeMailbox}</b>.</p>
+                <br/>
+                <button @click=\"\${() => handleRegisterPasskey()}\">Create Passkey</button>
+              </div>
+            </div>
+          \`;
+        }
+
+        return html\`
+          <div class=\"empty-state\">
+            <div class=\"empty-icon\">🔑</div>
+            <div class=\"empty-copy\">
+              <h3>Access Protected</h3>
+              <p>Please verify your identity to view <b>\${() => state.activeMailbox}</b>.</p>
+              <br/>
+              <button @click=\"\${() => handleLoginPasskey()}\">Verify with Passkey</button>
+            </div>
+          </div>
+        \`;
+      }
+
       if (state.isInboxLoading) {
         return html\`
-          <div class="stack-sm">
+          <div class=\"stack-sm\">
             \${() => state.skeletonItems.map((n) => html\`
-              <div class="email-item email-skeleton" aria-hidden="true">
-                <div class="email-row">
-                  <div class="skeleton-line skeleton-subject"></div>
-                  <div class="skeleton-line skeleton-meta"></div>
+              <div class=\"email-item email-skeleton\" aria-hidden=\"true\">
+                <div class=\"email-row\">
+                  <div class=\"skeleton-line skeleton-subject\"></div>
+                  <div class=\"skeleton-line skeleton-meta\"></div>
                 </div>
-                <div class="skeleton-line skeleton-from"></div>
-                <div class="skeleton-line skeleton-snippet"></div>
-                <div class="skeleton-line skeleton-snippet short"></div>
+                <div class=\"skeleton-line skeleton-from\"></div>
+                <div class=\"skeleton-line skeleton-snippet\"></div>
+                <div class=\"skeleton-line skeleton-snippet short\"></div>
               </div>
             \`.key('email-skeleton-' + n))}
           </div>
@@ -414,9 +552,9 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
       if (state.emails.length === 0) {
         return html\`
-          <div class="empty-state empty-state-compact">
-            <div class="empty-icon">✉️</div>
-            <div class="empty-copy">
+          <div class=\"empty-state empty-state-compact\">
+            <div class=\"empty-icon\">✉️</div>
+            <div class=\"empty-copy\">
               <h3>Your inbox is empty</h3>
               <p>No emails have arrived at <b>\${() => state.activeMailbox}</b> yet. Share this address or wait a moment. The inbox refreshes automatically when new messages arrive.</p>
             </div>
@@ -425,23 +563,23 @@ export function HomePage({ mailDomain }: HomePageProps) {
       }
 
       return html\`
-        <div class="stack-sm">
+        <div class=\"stack-sm\">
           \${() => state.emails.map((email) => html\`
             <div
-              class="\${() => {
+              class=\"\${() => {
                 const classes = ['email-item'];
                 if (state.selectedId === email.id) classes.push('is-active');
                 if (state.isEmailLoading && state.selectedId === email.id) classes.push('is-loading');
                 return classes.join(' ');
-              }}"
-              @click="\${() => viewEmail(email.id)}"
+              }}\"
+              @click=\"\${() => viewEmail(email.id)}\"
             >
-              <div class="email-row">
-                <div class="subject">\${() => email.subject || '(No Subject)'}</div>
-                <span class="meta">\${() => formatTimestamp(email.timestamp)}</span>
+              <div class=\"email-row\">
+                <div class=\"subject\">\${() => email.subject || '(No Subject)'}</div>
+                <span class=\"meta\">\${() => formatTimestamp(email.timestamp)}</span>
               </div>
-              <div class="meta">\${() => 'From: ' + email.id_from}</div>
-              <div class="snippet">\${() => previewText(email)}</div>
+              <div class=\"meta\">\${() => 'From: ' + email.id_from}</div>
+              <div class=\"snippet\">\${() => previewText(email)}</div>
             </div>
           \`.key(email.id))}
         </div>
@@ -451,26 +589,26 @@ export function HomePage({ mailDomain }: HomePageProps) {
     const renderDesktopDetail = () => {
       if (!state.showInbox) {
         return html\`
-          <div class="detail-stage detail-empty detail-welcome">
-            <div class="detail-empty-art detail-welcome-art" aria-hidden="true">
-              <div class="empty-icon detail-empty-icon detail-welcome-icon">💌</div>
-              <div class="detail-empty-glow"></div>
+          <div class=\"detail-stage detail-empty detail-welcome\">
+            <div class=\"detail-empty-art detail-welcome-art\" aria-hidden=\"true\">
+              <div class=\"empty-icon detail-empty-icon detail-welcome-icon\">💌</div>
+              <div class=\"detail-empty-glow\"></div>
             </div>
-            <div class="empty-copy detail-empty-copy">
-              <span class="detail-empty-kicker">Disposable Inbox, Better Presented</span>
+            <div class=\"empty-copy detail-empty-copy\">
+              <span class=\"detail-empty-kicker\">Disposable Inbox, Better Presented</span>
               <h3>Create a temporary mailbox and inspect emails in real time.</h3>
               <p>Hana Temp Mail gives you a fast disposable inbox for signups, OTP checks, transactional email testing, and quick verification flows, all inside a focused desktop workspace.</p>
             </div>
-            <div class="detail-guide-grid detail-welcome-grid">
-              <article class="detail-guide-card">
+            <div class=\"detail-guide-grid detail-welcome-grid\">
+              <article class=\"detail-guide-card\">
                 <h4>Instant setup</h4>
-                <p>Pick any mailbox name or roll a random one, then open the inbox in one click.</p>
+                <p>Pick any mailbox name or roll a random one, then open the inbox in one click.</p>\${() => passkeyEnabled ? html\`<p style=\"margin-top:.4rem;font-size:.8rem;color:var(--accent)\">🔒 Passkey protection enabled</p>\` : ''}
               </article>
-              <article class="detail-guide-card">
+              <article class=\"detail-guide-card\">
                 <h4>Live monitoring</h4>
                 <p>Incoming messages appear automatically through realtime updates, so you can keep testing without manual refreshes.</p>
               </article>
-              <article class="detail-guide-card">
+              <article class=\"detail-guide-card\">
                 <h4>Safe preview</h4>
                 <p>Read plain text or sanitized HTML content with sender details and timestamps in a clean side-by-side layout.</p>
               </article>
@@ -479,28 +617,44 @@ export function HomePage({ mailDomain }: HomePageProps) {
         \`;
       }
 
+      if (passkeyEnabled && !state.authStatus.authenticated) {
+        return html\`
+          <div class=\"detail-stage detail-empty\">
+            <div class=\"detail-empty-art\" aria-hidden=\"true\">
+              <div class=\"empty-icon detail-empty-icon\">🔒</div>
+              <div class=\"detail-empty-glow\"></div>
+            </div>
+            <div class=\"empty-copy detail-empty-copy\">
+              <span class=\"detail-empty-kicker\">Authentication Required</span>
+              <h3>\${() => state.authStatus.hasPasskey ? 'Inbox Protected' : 'Setup Required'}</h3>
+              <p>This workspace uses Passkeys to ensure only you can access your temporary messages. \${() => state.authStatus.hasPasskey ? 'Tap the verify button on the left to continue.' : 'Register your passkey to secure this inbox.'}</p>
+            </div>
+          </div>
+        \`;
+      }
+
       if (!state.selected && !state.isEmailLoading) {
         return html\`
-          <div class="detail-stage detail-empty">
-            <div class="detail-empty-art" aria-hidden="true">
-              <div class="empty-icon detail-empty-icon">📭</div>
-              <div class="detail-empty-glow"></div>
+          <div class=\"detail-stage detail-empty\">
+            <div class=\"detail-empty-art\" aria-hidden=\"true\">
+              <div class=\"empty-icon detail-empty-icon\">📭</div>
+              <div class=\"detail-empty-glow\"></div>
             </div>
-            <div class="empty-copy detail-empty-copy">
-              <span class="detail-empty-kicker">Welcome to Hana Temp Mail</span>
+            <div class=\"empty-copy detail-empty-copy\">
+              <span class=\"detail-empty-kicker\">Welcome to Hana Temp Mail</span>\${() => passkeyEnabled ? html\`<span class=\"detail-empty-kicker\" style=\"margin-left:.5rem;background:#d1fae5;color:#065f46\">✓ Verified</span>\` : ''}
               <h3>Your inbox is live. Pick any message to inspect it here.</h3>
               <p>This workspace is built for quick disposable inboxes. Create or reuse an address, keep the inbox open, and incoming emails will appear automatically without a full page refresh.</p>
             </div>
-            <div class="detail-guide-grid">
-              <article class="detail-guide-card">
+            <div class=\"detail-guide-grid\">
+              <article class=\"detail-guide-card\">
                 <h4>How it works</h4>
                 <p>Choose a mailbox name, click <strong>Open Inbox</strong>, then share that address anywhere you need a temporary mailbox.</p>
-              </article>
-              <article class="detail-guide-card">
-                <h4>What you can do</h4>
-                <p>Preview sender details, timestamps, plain text, and safe HTML email content from the message list on the left.</p>
-              </article>
-              <article class="detail-guide-card">
+              </article>\${() => passkeyEnabled ? html\`
+              <article class=\"detail-guide-card\">
+                <h4>Security</h4>
+                <p>Your session is tied to your Passkey. You can access this inbox later from this device without a password.</p>
+              </article>\` : ''}
+              <article class=\"detail-guide-card\">
                 <h4>Best practice</h4>
                 <p>Leave this inbox open while testing signups, OTP flows, and transactional emails so new messages show up in real time.</p>
               </article>
@@ -511,27 +665,27 @@ export function HomePage({ mailDomain }: HomePageProps) {
 
       if (state.isEmailLoading) {
         return html\`
-          <div class="detail-stage modal-skeleton detail-loading" aria-hidden="true">
-            <div class="skeleton-line skeleton-heading"></div>
-            <div class="skeleton-line skeleton-meta wide"></div>
-            <div class="skeleton-block"></div>
-            <div class="skeleton-line skeleton-snippet"></div>
-            <div class="skeleton-line skeleton-snippet short"></div>
+          <div class=\"detail-stage modal-skeleton detail-loading\" aria-hidden=\"true\">
+            <div class=\"skeleton-line skeleton-heading\"></div>
+            <div class=\"skeleton-line skeleton-meta wide\"></div>
+            <div class=\"skeleton-block\"></div>
+            <div class=\"skeleton-line skeleton-snippet\"></div>
+            <div class=\"skeleton-line skeleton-snippet short\"></div>
           </div>
         \`;
       }
 
       return html\`
-        <div class="detail-stage detail-content">
-          <div class="detail-head">
+        <div class=\"detail-stage detail-content\">
+          <div class=\"detail-head\">
             <h2>\${() => state.selected?.subject || '(No Subject)'}</h2>
-            <p class="meta">\${() => state.selected ? ('From: ' + state.selected.id_from + ' | To: ' + state.selected.id_to) : ''}</p>
-            <p class="meta">\${() => state.selected ? formatTimestamp(state.selected.timestamp) : ''}</p>
+            <p class=\"meta\">\${() => state.selected ? ('From: ' + state.selected.id_from + ' | To: ' + state.selected.id_to) : ''}</p>\${() => passkeyEnabled ? html\`<p class=\"meta\" style=\"color:#059669;font-weight:600\">✓ Verified Access</p>\` : ''}
+            <p class=\"meta\">\${() => state.selected ? formatTimestamp(state.selected.timestamp) : ''}</p>
           </div>
-          <hr class="detail-divider" />
+          <hr class=\"detail-divider\" />
           \${() => state.selectedIsHtml
-            ? html\`<iframe id="email-html-frame-desktop" class="email-html-frame" sandbox="allow-popups" referrerpolicy="no-referrer"></iframe>\`
-            : html\`<pre class="text-body">\${() => state.selectedPlainText || '(No message body)'}</pre>\`}
+            ? html\`<iframe id=\"email-html-frame-desktop\" class=\"email-html-frame\" sandbox=\"allow-popups\" referrerpolicy=\"no-referrer\"></iframe>\`
+            : html\`<pre class=\"text-body\">\${() => state.selectedPlainText || '(No message body)'}</pre>\`}
         </div>
       \`;
     };
@@ -539,92 +693,92 @@ export function HomePage({ mailDomain }: HomePageProps) {
     const renderMobileDetail = () => {
       if (state.isEmailLoading) {
         return html\`
-          <div class="modal-skeleton" aria-hidden="true">
-            <div class="skeleton-line skeleton-heading"></div>
-            <div class="skeleton-line skeleton-meta wide"></div>
-            <div class="skeleton-block"></div>
-            <div class="skeleton-line skeleton-snippet"></div>
-            <div class="skeleton-line skeleton-snippet short"></div>
+          <div class=\"modal-skeleton\" aria-hidden=\"true\">
+            <div class=\"skeleton-line skeleton-heading\"></div>
+            <div class=\"skeleton-line skeleton-meta wide\"></div>
+            <div class=\"skeleton-block\"></div>
+            <div class=\"skeleton-line skeleton-snippet\"></div>
+            <div class=\"skeleton-line skeleton-snippet short\"></div>
           </div>
         \`;
       }
 
       if (state.selected && state.selectedIsHtml) {
-        return html\`<iframe id="email-html-frame-mobile" class="email-html-frame" sandbox="allow-popups" referrerpolicy="no-referrer"></iframe>\`;
+        return html\`<iframe id=\"email-html-frame-mobile\" class=\"email-html-frame\" sandbox=\"allow-popups\" referrerpolicy=\"no-referrer\"></iframe>\`;
       }
 
       if (state.selected) {
-        return html\`<pre class="text-body">\${() => state.selectedPlainText || '(No message body)'}</pre>\`;
+        return html\`<pre class=\"text-body\">\${() => state.selectedPlainText || '(No message body)'}</pre>\`;
       }
 
       return '';
     };
 
     const app = html\`
-      <div class="hero">
-        <div class="hero-badge">🌸 Hana Mail Workspace</div>
+      <div class=\"hero\">
+        <div class=\"hero-badge\">🌸 Hana Mail Workspace</div>
         <h1>Temporary Mail Inbox</h1>
-        <p class="sub">Generate a mailbox and monitor incoming messages in real time.</p>
+        <p class=\"sub\">Generate a mailbox and monitor incoming messages in real time.</p>
       </div>
 
-      <div class="page-main">
-        <aside class="sidebar">
-          <div class="card">
-            <div class="selector">
-              <div class="input-wrap">
+      <div class=\"page-main\">
+        <aside class=\"sidebar\">
+          <div class=\"card\">
+            <div class=\"selector\">
+              <div class=\"input-wrap\">
                 <input
-                  type="text"
-                  placeholder="email name"
-                  .value="\${() => state.localPart}"
-                  @input="\${(event) => {
+                  type=\"text\"
+                  placeholder=\"email name\"
+                  .value=\"\${() => state.localPart}\"
+                  @input=\"\${(event) => {
                     state.localPart = String(event.currentTarget?.value || '').toLowerCase();
-                  }}"
+                  }}\"
                 />
-                <span class="domain-suffix">@\${mailDomain}</span>
+                <span class=\"domain-suffix\">@\${mailDomain}</span>
                 <button
-                  class="\${() => state.diceRolling ? 'dice-btn is-rolling' : 'dice-btn'}"
-                  disabled="\${() => state.diceRolling || false}"
-                  @click="\${(event) => {
+                  class=\"\${() => state.diceRolling ? 'dice-btn is-rolling' : 'dice-btn'}\"
+                  disabled=\"\${() => state.diceRolling || false}\"
+                  @click=\"\${(event) => {
                     event.preventDefault();
                     generateRandom();
-                  }}"
-                  title="Generate random inbox"
+                  }}\"
+                  title=\"Generate random inbox\"
                 >🎲</button>
               </div>
-              <button style="display:block;width:100%;" @click="\${() => activateInbox()}">Open Inbox</button>
+              <button style=\"display:block;width:100%;\" @click=\"\${() => activateInbox()}\">Open Inbox</button>
             </div>
-            <div class="status">\${() => state.status}</div>
+            <div class=\"status\">\${() => state.status}</div>
           </div>
 
           \${() => state.showInbox ? html\`
-            <div class="email-list-wrap card" id="email-list">
-              <div class="inbox-head">
+            <div class=\"email-list-wrap card\" id=\"email-list\">
+              <div class=\"inbox-head\">
                 <span>Inbox: <b>\${() => state.activeMailbox}</b></span>
                 <span>\${() => state.emails.length + ' message(s)'}</span>
               </div>
-              <div class="email-list-body">\${() => renderInboxBody()}</div>
+              <div class=\"email-list-body\">\${() => renderInboxBody()}</div>
             </div>
           \` : ''}
         </aside>
 
-        <section class="detail-panel">\${() => renderDesktopDetail()}</section>
+        <section class=\"detail-panel\">\${() => renderDesktopDetail()}</section>
       </div>
 
-      <div class="footer">
-        Built for Cloudflare Workers · <a href="https://github.com/ai-hana-ai/hana-temp-mail" target="_blank" rel="noopener noreferrer">View source on GitHub</a>
+      <div class=\"footer\">
+        Built for Cloudflare Workers · <a href=\"https://github.com/ai-hana-ai/hana-temp-mail\" target=\"_blank\" rel=\"noopener noreferrer\">View source on GitHub</a>
       </div>
 
       <div
-        class="\${() => state.modalOpen && !state.isDesktopLayout ? 'modal show' : 'modal'}"
-        @click="\${() => closeModal()}"
+        class=\"\${() => state.modalOpen && !state.isDesktopLayout ? 'modal show' : 'modal'}\"
+        @click=\"\${() => closeModal()}\"
       >
-        <div class="modal-content" @click="\${(event) => event.stopPropagation()}">
+        <div class=\"modal-content\" @click=\"\${(event) => event.stopPropagation()}\">
           <h2>\${() => state.selected?.subject || '(No Subject)'}</h2>
-          <p class="meta">\${() => state.selected ? ('From: ' + state.selected.id_from + ' | To: ' + state.selected.id_to) : ''}</p>
-          <hr class="detail-divider" />
+          <p class=\"meta\">\${() => state.selected ? ('From: ' + state.selected.id_from + ' | To: ' + state.selected.id_to) : ''}</p>
+          <hr class=\"detail-divider\" />
           \${() => renderMobileDetail()}
           <br />
-          <button style="display:block;width:100%;" @click="\${() => closeModal()}">Close</button>
+          <button style=\"display:block;width:100%;\" @click=\"\${() => closeModal()}\">Close</button>
         </div>
       </div>
     \`;
@@ -684,8 +838,8 @@ export function HomePage({ mailDomain }: HomePageProps) {
     .card { width:100%;max-width:100%;background:linear-gradient(180deg, #fff 0%, #fcfcff 100%);border:1px solid var(--line);border-radius:16px;padding:1rem;box-shadow:0 10px 26px rgba(23,34,74,.07),0 1px 0 rgba(255,255,255,.8) inset; }
     .selector { display:grid; gap:.7rem; }
     .input-wrap { position:relative; }
-    input[type="text"] { width:100%;padding:.72rem 8.8rem .72rem .78rem;border-radius:10px;border:1px solid #d8deea;font-size:.95rem;outline:none;text-transform:lowercase; }
-    input[type="text"]:focus { border-color:#b5c3ff; box-shadow:0 0 0 3px #eef1ff; }
+    input[type=\"text\"] { width:100%;padding:.72rem 8.8rem .72rem .78rem;border-radius:10px;border:1px solid #d8deea;font-size:.95rem;outline:none;text-transform:lowercase; }
+    input[type=\"text\"]:focus { border-color:#b5c3ff; box-shadow:0 0 0 3px #eef1ff; }
     .domain-suffix { position:absolute;right:2.9rem;top:50%;transform:translateY(-50%);color:#7b8197;font-size:.9rem;pointer-events:none; }
     .dice-btn { position:absolute;right:7px;top:50%;transform:translateY(-50%);border:0;background:transparent;box-shadow:none;cursor:pointer;font-size:1rem;line-height:1;width:1.95rem;height:1.95rem;display:inline-flex;align-items:center;justify-content:center;border-radius:8px; }
     .dice-btn:hover { background:transparent;transform:translateY(-50%); }
@@ -1066,13 +1220,13 @@ export function HomePage({ mailDomain }: HomePageProps) {
         <style dangerouslySetInnerHTML={{ __html: css }} />
       </head>
       <body>
-        <div id="app" data-cloak data-mail-domain={`@${mailDomain}`}></div>
-        <script type="module" dangerouslySetInnerHTML={{ __html: appScript }} />
+        <div id=\"app\" data-cloak data-mail-domain={`@${mailDomain}`}></div>
+        <script type=\"module\" dangerouslySetInnerHTML={{ __html: appScript }} />
       </body>
     </html>
   );
 }
 
-export function renderHomePage(mailDomain: string) {
-  return '<!DOCTYPE html>' + <HomePage mailDomain={mailDomain} />;
+export function renderHomePage(mailDomain: string, options: { passkeyEnabled?: boolean } = {}) {
+  return '<!DOCTYPE html>' + <HomePage mailDomain={mailDomain} passkeyEnabled={options.passkeyEnabled} />;
 }

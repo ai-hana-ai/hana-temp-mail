@@ -1,3 +1,9 @@
+import {
+  generateAuthenticationOptions,
+  generateRegistrationOptions,
+  verifyAuthenticationResponse,
+  verifyRegistrationResponse,
+} from '@simplewebauthn/server';
 import { Context, Hono } from 'hono';
 import PostalMime from 'postal-mime';
 import { renderHomePage } from './ui.tsx';
@@ -8,23 +14,87 @@ export interface Env {
   MAIL_DOMAIN?: string;
   RETENTION_DAYS?: string;
   RATE_LIMIT_WINDOW_MS?: string;
+  ENABLE_PASSKEY?: string;
+  PASSKEY_RP_ID?: string;
+  PASSKEY_RP_NAME?: string;
+  SESSION_TTL_HOURS?: string;
 }
 
 type Bindings = { Bindings: Env };
 
+type AuthUserRow = {
+  id: string;
+  mailbox: string;
+};
+
+type AuthCredentialRow = {
+  id: string;
+  credential_id: string;
+  public_key: string;
+  counter: number;
+  user_id: string;
+  transports: string | null;
+};
+
+type AuthChallengeRow = {
+  id: string;
+  user_id: string;
+  challenge: string;
+  flow: 'registration' | 'authentication';
+  mailbox: string;
+};
+
+type AuthSessionRow = {
+  id: string;
+  user_id: string;
+  mailbox: string;
+  expires_at: string;
+};
+
+type AuthStatus = {
+  mailbox: string;
+  hasPasskey: boolean;
+  authenticated: boolean;
+  user: AuthUserRow | null;
+};
+
 const app = new Hono<Bindings>();
 const rateLimitState = new Map<string, { count: number; resetAt: number }>();
 let nextRateLimitCleanupAt = 0;
+const SESSION_COOKIE = 'hana_session';
+const textEncoder = new TextEncoder();
 
 const RATE_LIMITS = {
   random: 24,
   inboxList: 60,
   emailDetail: 120,
   stream: 12,
+  auth: 30,
 } as const;
 
 export function getMailDomain(env: Env): string {
   return (env.MAIL_DOMAIN || 'adopsee.com').trim().toLowerCase();
+}
+
+export function isPasskeyEnabled(env: Env): boolean {
+  return String(env.ENABLE_PASSKEY || '')
+    .trim()
+    .toLowerCase() === 'true';
+}
+
+export function getPasskeyRpID(env: Env, requestUrl: string): string {
+  const configured = (env.PASSKEY_RP_ID || '').trim().toLowerCase();
+  if (configured) return configured;
+  return new URL(requestUrl).hostname;
+}
+
+export function getPasskeyRpName(env: Env): string {
+  const configured = (env.PASSKEY_RP_NAME || '').trim();
+  return configured || 'Hana Temp Mail';
+}
+
+export function getPasskeyOrigin(requestUrl: string): string {
+  return new URL(requestUrl).origin;
 }
 
 export function normalizeMailbox(input: string | null, mailDomain: string): string | null {
@@ -50,6 +120,12 @@ export function getRateLimitWindowMs(env: Env): number {
   const raw = Number(env.RATE_LIMIT_WINDOW_MS || '');
   if (Number.isFinite(raw) && raw >= 1000) return raw;
   return 60_000;
+}
+
+export function getSessionTtlHours(env: Env): number {
+  const raw = Number(env.SESSION_TTL_HOURS || '');
+  if (Number.isFinite(raw) && raw >= 1 && raw <= 24 * 90) return Math.floor(raw);
+  return 24 * 30;
 }
 
 export function getClientIp(request: Request): string {
@@ -148,6 +224,214 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
   });
 }
 
+export function randomBase64Url(byteLength = 32): string {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return encodeBase64Url(bytes);
+}
+
+export function encodeBase64Url(input: ArrayBuffer | Uint8Array): string {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+export function decodeBase64Url(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function parseCookieHeader(header: string | null): Map<string, string> {
+  const cookies = new Map<string, string>();
+  if (!header) return cookies;
+
+  for (const part of header.split(';')) {
+    const [rawName, ...rest] = part.split('=');
+    const name = rawName.trim();
+    if (!name) continue;
+    cookies.set(name, rest.join('=').trim());
+  }
+
+  return cookies;
+}
+
+function serializeCookie(
+  name: string,
+  value: string,
+  options: {
+    maxAge?: number;
+    httpOnly?: boolean;
+    secure?: boolean;
+    sameSite?: 'Lax' | 'Strict' | 'None';
+    path?: string;
+    expires?: Date;
+  } = {}
+) {
+  const parts = [`${name}=${value}`];
+  parts.push(`Path=${options.path || '/'}`);
+  if (typeof options.maxAge === 'number') parts.push(`Max-Age=${Math.max(0, Math.floor(options.maxAge))}`);
+  if (options.expires) parts.push(`Expires=${options.expires.toUTCString()}`);
+  if (options.httpOnly !== false) parts.push('HttpOnly');
+  if (options.secure !== false) parts.push('Secure');
+  parts.push(`SameSite=${options.sameSite || 'Lax'}`);
+  return parts.join('; ');
+}
+
+async function findUserByMailbox(env: Env, mailbox: string) {
+  return env.DB.prepare('SELECT id, mailbox FROM auth_users WHERE mailbox = ?').bind(mailbox).first<AuthUserRow>();
+}
+
+async function ensureUserForMailbox(env: Env, mailbox: string) {
+  const existing = await findUserByMailbox(env, mailbox);
+  if (existing) return existing;
+
+  const id = crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO auth_users (id, mailbox) VALUES (?, ?)').bind(id, mailbox).run();
+  return { id, mailbox } satisfies AuthUserRow;
+}
+
+async function listCredentialsByUser(env: Env, userId: string) {
+  const result = await env.DB.prepare(
+    'SELECT id, credential_id, public_key, counter, user_id, transports FROM auth_credentials WHERE user_id = ? ORDER BY created_at ASC'
+  )
+    .bind(userId)
+    .all<AuthCredentialRow>();
+
+  return result.results || [];
+}
+
+async function findCredentialByCredentialId(env: Env, credentialId: string) {
+  return env.DB.prepare(
+    'SELECT id, credential_id, public_key, counter, user_id, transports FROM auth_credentials WHERE credential_id = ?'
+  )
+    .bind(credentialId)
+    .first<AuthCredentialRow>();
+}
+
+async function storeChallenge(
+  env: Env,
+  userId: string,
+  mailbox: string,
+  flow: 'registration' | 'authentication',
+  challenge: string
+) {
+  await env.DB.prepare("DELETE FROM auth_challenges WHERE user_id = ? AND flow = ?").bind(userId, flow).run();
+  await env.DB.prepare(
+    "INSERT INTO auth_challenges (id, user_id, mailbox, flow, challenge, expires_at) VALUES (?, ?, ?, ?, ?, datetime('now', '+10 minutes'))"
+  )
+    .bind(crypto.randomUUID(), userId, mailbox, flow, challenge)
+    .run();
+}
+
+async function getChallenge(env: Env, userId: string, flow: 'registration' | 'authentication') {
+  return env.DB.prepare(
+    "SELECT id, user_id, mailbox, flow, challenge FROM auth_challenges WHERE user_id = ? AND flow = ? AND expires_at > datetime('now') ORDER BY created_at DESC LIMIT 1"
+  )
+    .bind(userId, flow)
+    .first<AuthChallengeRow>();
+}
+
+async function deleteChallenge(env: Env, challengeId: string) {
+  await env.DB.prepare('DELETE FROM auth_challenges WHERE id = ?').bind(challengeId).run();
+}
+
+async function setSessionCookie(c: Context<Bindings>, userId: string, mailbox: string) {
+  const token = randomBase64Url(32);
+  const tokenHash = await sha256Hex(token);
+  const ttlHours = getSessionTtlHours(c.env);
+  const maxAge = ttlHours * 60 * 60;
+
+  await c.env.DB.prepare(
+    "INSERT INTO auth_sessions (id, user_id, mailbox, token_hash, expires_at, last_used_at) VALUES (?, ?, ?, ?, datetime('now', ?), CURRENT_TIMESTAMP)"
+  )
+    .bind(crypto.randomUUID(), userId, mailbox, tokenHash, `+${ttlHours} hours`)
+    .run();
+
+  c.header(
+    'Set-Cookie',
+    serializeCookie(SESSION_COOKIE, token, {
+      maxAge,
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      path: '/',
+    })
+  );
+}
+
+function clearSessionCookie(c: Context<Bindings>) {
+  c.header(
+    'Set-Cookie',
+    serializeCookie(SESSION_COOKIE, '', {
+      maxAge: 0,
+      expires: new Date(0),
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      path: '/',
+    })
+  );
+}
+
+async function getSessionForMailbox(c: Context<Bindings>, mailbox: string) {
+  const cookies = parseCookieHeader(c.req.header('cookie') || null);
+  const token = cookies.get(SESSION_COOKIE);
+  if (!token) return null;
+
+  const tokenHash = await sha256Hex(token);
+  const session = await c.env.DB.prepare(
+    "SELECT id, user_id, mailbox, expires_at FROM auth_sessions WHERE token_hash = ? AND mailbox = ? AND expires_at > datetime('now')"
+  )
+    .bind(tokenHash, mailbox)
+    .first<AuthSessionRow>();
+
+  if (!session) return null;
+
+  await c.env.DB.prepare('UPDATE auth_sessions SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?').bind(session.id).run();
+  return session;
+}
+
+async function getAuthStatus(c: Context<Bindings>, mailbox: string): Promise<AuthStatus> {
+  const user = await findUserByMailbox(c.env, mailbox);
+  if (!user) {
+    return { mailbox, hasPasskey: false, authenticated: false, user: null };
+  }
+
+  const credentials = await listCredentialsByUser(c.env, user.id);
+  const hasPasskey = credentials.length > 0;
+  const session = hasPasskey ? await getSessionForMailbox(c, mailbox) : null;
+
+  return {
+    mailbox,
+    hasPasskey,
+    authenticated: Boolean(session),
+    user,
+  };
+}
+
+async function requireAuthorizedMailbox(c: Context<Bindings>, mailbox: string) {
+  if (!isPasskeyEnabled(c.env)) return null;
+
+  const session = await getSessionForMailbox(c, mailbox);
+  if (session) return null;
+
+  clearSessionCookie(c);
+  return jsonError(c, 401, 'auth_required', 'Passkey authentication is required for this inbox.');
+}
+
+export async function cleanupExpiredAuthArtifacts(env: Env) {
+  await env.DB.prepare("DELETE FROM auth_challenges WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')").run();
+  await env.DB.prepare("DELETE FROM auth_sessions WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')").run();
+}
+
 export async function cleanupExpiredEmails(env: Env) {
   try {
     const result = await env.DB.prepare("DELETE FROM emails WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')").run();
@@ -163,11 +447,13 @@ app.use('/api/*', async (c, next) => {
   const bucket: keyof typeof RATE_LIMITS =
     path === '/api/mailbox/random'
       ? 'random'
-      : path === '/api/stream'
-        ? 'stream'
-        : path.startsWith('/api/email/')
-          ? 'emailDetail'
-          : 'inboxList';
+      : path.startsWith('/api/auth/')
+        ? 'auth'
+        : path === '/api/stream'
+          ? 'stream'
+          : path.startsWith('/api/email/')
+            ? 'emailDetail'
+            : 'inboxList';
 
   const limited = applyRateLimit(c, bucket);
   if (limited) return limited;
@@ -179,12 +465,239 @@ app.get('/api/mailbox/random', (c) => {
   return c.json({ mailbox: randomMailbox(mailDomain), domain: mailDomain });
 });
 
+app.get('/api/auth/status', async (c) => {
+  const enabled = isPasskeyEnabled(c.env);
+  const mailDomain = getMailDomain(c.env);
+  const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomain);
+  if (!mailbox) {
+    return jsonError(c, 400, 'invalid_mailbox', `Query parameter \`to\` must be a valid mailbox for @${mailDomain}.`);
+  }
+
+  if (!enabled) {
+    return c.json({ enabled: false, mailbox, hasPasskey: false, authenticated: true });
+  }
+
+  const status = await getAuthStatus(c, mailbox);
+  return c.json({
+    enabled: true,
+    mailbox,
+    hasPasskey: status.hasPasskey,
+    authenticated: status.authenticated,
+  });
+});
+
+app.post('/api/auth/register/options', async (c) => {
+  if (!isPasskeyEnabled(c.env)) {
+    return jsonError(c, 404, 'passkey_disabled', 'Passkey authentication is disabled.');
+  }
+
+  const mailDomain = getMailDomain(c.env);
+  const payload = (await c.req.json().catch(() => null)) as { mailbox?: string } | null;
+  const mailbox = normalizeMailbox(payload?.mailbox || null, mailDomain);
+  if (!mailbox) {
+    return jsonError(c, 400, 'invalid_mailbox', `Mailbox must be a valid address for @${mailDomain}.`);
+  }
+
+  const user = await ensureUserForMailbox(c.env, mailbox);
+  const existingCredentials = await listCredentialsByUser(c.env, user.id);
+  if (existingCredentials.length > 0) {
+    return jsonError(c, 409, 'already_registered', 'A passkey is already registered for this inbox.');
+  }
+
+  const rpID = getPasskeyRpID(c.env, c.req.url);
+  const options = await generateRegistrationOptions({
+    rpID,
+    rpName: getPasskeyRpName(c.env),
+    userID: textEncoder.encode(user.id),
+    userName: mailbox,
+    userDisplayName: mailbox,
+    attestationType: 'none',
+    authenticatorSelection: {
+      residentKey: 'preferred',
+      userVerification: 'preferred',
+    },
+    supportedAlgorithmIDs: [-7, -257],
+  });
+
+  await storeChallenge(c.env, user.id, mailbox, 'registration', options.challenge);
+  return c.json({ mailbox, options });
+});
+
+app.post('/api/auth/register/verify', async (c) => {
+  if (!isPasskeyEnabled(c.env)) {
+    return jsonError(c, 404, 'passkey_disabled', 'Passkey authentication is disabled.');
+  }
+
+  const mailDomain = getMailDomain(c.env);
+  const payload = (await c.req.json().catch(() => null)) as {
+    mailbox?: string;
+    response?: unknown;
+  } | null;
+  const mailbox = normalizeMailbox(payload?.mailbox || null, mailDomain);
+  if (!mailbox || !payload?.response) {
+    return jsonError(c, 400, 'invalid_request', `Mailbox and WebAuthn response are required for @${mailDomain}.`);
+  }
+
+  const user = await findUserByMailbox(c.env, mailbox);
+  if (!user) {
+    return jsonError(c, 404, 'not_found', 'Inbox registration context was not found.');
+  }
+
+  const challenge = await getChallenge(c.env, user.id, 'registration');
+  if (!challenge) {
+    return jsonError(c, 400, 'challenge_missing', 'Registration challenge expired. Start setup again.');
+  }
+
+  const verification = await verifyRegistrationResponse({
+    response: payload.response as Parameters<typeof verifyRegistrationResponse>[0]['response'],
+    expectedChallenge: challenge.challenge,
+    expectedOrigin: getPasskeyOrigin(c.req.url),
+    expectedRPID: getPasskeyRpID(c.env, c.req.url),
+    requireUserVerification: false,
+  }).catch((error) => {
+    console.error('auth.passkey.register_verify_failed', { mailbox, error });
+    return null;
+  });
+
+  if (!verification?.verified || !verification.registrationInfo) {
+    return jsonError(c, 400, 'registration_failed', 'Passkey registration could not be verified.');
+  }
+
+  const credential = verification.registrationInfo.credential;
+  await c.env.DB.prepare(
+    'INSERT INTO auth_credentials (id, credential_id, public_key, counter, user_id, transports) VALUES (?, ?, ?, ?, ?, ?)'
+  )
+    .bind(
+      crypto.randomUUID(),
+      credential.id,
+      encodeBase64Url(credential.publicKey),
+      credential.counter,
+      user.id,
+      JSON.stringify(credential.transports || [])
+    )
+    .run();
+
+  await deleteChallenge(c.env, challenge.id);
+  await setSessionCookie(c, user.id, mailbox);
+  return c.json({ ok: true, mailbox, authenticated: true });
+});
+
+app.post('/api/auth/login/options', async (c) => {
+  if (!isPasskeyEnabled(c.env)) {
+    return jsonError(c, 404, 'passkey_disabled', 'Passkey authentication is disabled.');
+  }
+
+  const mailDomain = getMailDomain(c.env);
+  const payload = (await c.req.json().catch(() => null)) as { mailbox?: string } | null;
+  const mailbox = normalizeMailbox(payload?.mailbox || null, mailDomain);
+  if (!mailbox) {
+    return jsonError(c, 400, 'invalid_mailbox', `Mailbox must be a valid address for @${mailDomain}.`);
+  }
+
+  const user = await findUserByMailbox(c.env, mailbox);
+  if (!user) {
+    return jsonError(c, 404, 'not_found', 'No passkey is registered for this inbox yet.');
+  }
+
+  const credentials = await listCredentialsByUser(c.env, user.id);
+  if (credentials.length === 0) {
+    return jsonError(c, 404, 'not_found', 'No passkey is registered for this inbox yet.');
+  }
+
+  const options = await generateAuthenticationOptions({
+    rpID: getPasskeyRpID(c.env, c.req.url),
+    userVerification: 'preferred',
+    allowCredentials: credentials.map((credential) => ({
+      id: decodeBase64Url(credential.credential_id),
+      type: 'public-key',
+      transports: JSON.parse(credential.transports || '[]'),
+    })),
+  });
+
+  await storeChallenge(c.env, user.id, mailbox, 'authentication', options.challenge);
+  return c.json({ mailbox, options });
+});
+
+app.post('/api/auth/login/verify', async (c) => {
+  if (!isPasskeyEnabled(c.env)) {
+    return jsonError(c, 404, 'passkey_disabled', 'Passkey authentication is disabled.');
+  }
+
+  const mailDomain = getMailDomain(c.env);
+  const payload = (await c.req.json().catch(() => null)) as {
+    mailbox?: string;
+    response?: { id?: string } & Record<string, unknown>;
+  } | null;
+  const mailbox = normalizeMailbox(payload?.mailbox || null, mailDomain);
+  if (!mailbox || !payload?.response?.id) {
+    return jsonError(c, 400, 'invalid_request', `Mailbox and WebAuthn response are required for @${mailDomain}.`);
+  }
+
+  const user = await findUserByMailbox(c.env, mailbox);
+  if (!user) {
+    return jsonError(c, 404, 'not_found', 'No passkey is registered for this inbox yet.');
+  }
+
+  const challenge = await getChallenge(c.env, user.id, 'authentication');
+  if (!challenge) {
+    return jsonError(c, 400, 'challenge_missing', 'Authentication challenge expired. Try again.');
+  }
+
+  const storedCredential = await findCredentialByCredentialId(c.env, payload.response.id);
+  if (!storedCredential || storedCredential.user_id !== user.id) {
+    return jsonError(c, 404, 'credential_not_found', 'Passkey credential was not found for this inbox.');
+  }
+
+  const verification = await verifyAuthenticationResponse({
+    response: payload.response as Parameters<typeof verifyAuthenticationResponse>[0]['response'],
+    expectedChallenge: challenge.challenge,
+    expectedOrigin: getPasskeyOrigin(c.req.url),
+    expectedRPID: getPasskeyRpID(c.env, c.req.url),
+    requireUserVerification: false,
+    credential: {
+      id: storedCredential.credential_id,
+      publicKey: decodeBase64Url(storedCredential.public_key),
+      counter: storedCredential.counter,
+      transports: JSON.parse(storedCredential.transports || '[]'),
+    },
+  }).catch((error) => {
+    console.error('auth.passkey.login_verify_failed', { mailbox, error });
+    return null;
+  });
+
+  if (!verification?.verified) {
+    return jsonError(c, 400, 'authentication_failed', 'Passkey authentication could not be verified.');
+  }
+
+  await c.env.DB.prepare('UPDATE auth_credentials SET counter = ?, last_used_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .bind(verification.authenticationInfo.newCounter, storedCredential.id)
+    .run();
+  await deleteChallenge(c.env, challenge.id);
+  await setSessionCookie(c, user.id, mailbox);
+  return c.json({ ok: true, mailbox, authenticated: true });
+});
+
+app.post('/api/auth/logout', async (c) => {
+  const cookies = parseCookieHeader(c.req.header('cookie') || null);
+  const token = cookies.get(SESSION_COOKIE);
+  if (token) {
+    const tokenHash = await sha256Hex(token);
+    await c.env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').bind(tokenHash).run();
+  }
+
+  clearSessionCookie(c);
+  return c.json({ ok: true });
+});
+
 app.get('/api/emails', async (c) => {
   const mailDomain = getMailDomain(c.env);
   const mailbox = normalizeMailbox(c.req.query('to') || null, mailDomain);
   if (!mailbox) {
     return jsonError(c, 400, 'invalid_mailbox', `Query parameter \`to\` must be a valid mailbox for @${mailDomain}.`);
   }
+
+  const unauthorized = await requireAuthorizedMailbox(c, mailbox);
+  if (unauthorized) return unauthorized;
 
   try {
     const { results } = await c.env.DB.prepare(
@@ -209,10 +722,11 @@ app.get('/api/email/:id', async (c) => {
     return jsonError(c, 400, 'invalid_request', `Email id and query parameter \`to\` (@${mailDomain}) are required.`);
   }
 
+  const unauthorized = await requireAuthorizedMailbox(c, mailbox);
+  if (unauthorized) return unauthorized;
+
   try {
-    const email = await c.env.DB.prepare('SELECT * FROM emails WHERE id = ? AND id_to = ?')
-      .bind(id, mailbox)
-      .first();
+    const email = await c.env.DB.prepare('SELECT * FROM emails WHERE id = ? AND id_to = ?').bind(id, mailbox).first();
 
     if (!email) return jsonError(c, 404, 'not_found', 'Email not found.');
     return c.json(email);
@@ -229,6 +743,9 @@ app.get('/api/stream', async (c) => {
   if (!mailbox) {
     return jsonError(c, 400, 'invalid_mailbox', `Missing or invalid \`to\` query parameter. Use @${mailDomain}.`);
   }
+
+  const unauthorized = await requireAuthorizedMailbox(c, mailbox);
+  if (unauthorized) return unauthorized;
 
   const abortSignal = c.req.raw.signal;
   const stream = new ReadableStream({
@@ -301,7 +818,7 @@ app.get('/api/stream', async (c) => {
 
 app.get('/', (c) => {
   const mailDomain = getMailDomain(c.env);
-  return c.html(renderHomePage(mailDomain));
+  return c.html(renderHomePage(mailDomain, { passkeyEnabled: isPasskeyEnabled(c.env) }));
 });
 
 export function resetRateLimitState(now = 0) {
@@ -326,6 +843,7 @@ const worker = {
   fetch: app.fetch,
   async scheduled(_controller: ScheduledController, env: Env) {
     await cleanupExpiredEmails(env);
+    await cleanupExpiredAuthArtifacts(env);
   },
   async email(message: ForwardableEmailMessage, env: Env) {
     const mailDomain = getMailDomain(env);

@@ -425,8 +425,13 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
         return;
       }
 
+      const newMailbox = toMailbox(local);
+      if (state.showInbox && state.activeMailbox === newMailbox) {
+        return;
+      }
+
       state.localPart = local;
-      state.activeMailbox = toMailbox(local);
+      state.activeMailbox = newMailbox;
       state.showInbox = true;
       state.selected = null;
       state.selectedId = null;

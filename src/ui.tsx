@@ -272,7 +272,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       state.isInboxLoading = true;
       if (!preserveExisting) {
         state.emails = [];
-        await waitForPaint();
+        
       }
       return loadSeq;
     };
@@ -389,7 +389,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
             resetSelectedEmail();
           }
         }
-        await waitForPaint();
+        
         if (mailbox !== state.activeMailbox) return;
         state.status = 'Monitoring: ' + mailbox + ' (real-time active)';
       } catch (error) {
@@ -456,7 +456,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       }
       
       state.status = isRefresh ? 'Refreshing inbox...' : 'Loading inbox...';
-      await loadEmails({ mailbox: newMailbox, preserveExisting: isRefresh });
+      loadEmails({ mailbox: newMailbox, preserveExisting: isRefresh });
       connectSSE(newMailbox);
     };
 
@@ -563,28 +563,20 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       </div>
     \`;
 
-    const renderInboxBody = () => {
-      const activeMailbox = state.activeMailbox;
-      const emails = Array.isArray(state.emails) ? [...state.emails] : [];
-      const isInboxLoading = state.isInboxLoading;
-      const selectedId = state.selectedId;
-      const isEmailLoading = state.isEmailLoading;
-
-      let content = '';
-      if (isInboxLoading && emails.length === 0) {
-        content = renderInboxSkeleton();
-      } else if (emails.length === 0) {
-        content = renderInboxEmpty(activeMailbox);
-      } else {
-        content = renderInboxList(emails, selectedId, isEmailLoading);
-      }
-
-      return html\`
-        <div class="inbox-body-content">
-          \${content}
-        </div>
-      \`.key('inbox-body-' + (activeMailbox || 'closed'));
-    };
+        const renderInboxBody = () => html\`
+      <div class=\"inbox-body-content\">
+        \${() => {
+          const emails = state.emails;
+          const loading = state.isInboxLoading;
+          if (loading && emails.length === 0) {
+            return renderInboxSkeleton();
+          }
+          if (emails.length === 0) {
+            return renderInboxEmpty(state.activeMailbox);
+          }
+          return renderInboxList(emails, state.selectedId, state.isEmailLoading);
+        }}
+      </div>\`;
 
     const renderDesktopDetail = () => {
       if (!state.showInbox) {
@@ -780,7 +772,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
                     <span>Inbox: <b>\${() => state.activeMailbox}</b></span>
                     <span>\${() => state.emails.length + ' message(s)'}</span>
                   </div>
-                  <div class=\"email-list-body\">\${renderInboxBody}</div>
+                  <div class=\"email-list-body\">\${() => renderInboxBody()}</div>
                 </div>
               \` : ''}
             </aside>

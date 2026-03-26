@@ -7,7 +7,7 @@ Guidance for coding agents working on this repository.
 - App type: public temporary inbox service for a single configured mail domain
 - Runtime: Cloudflare Workers
 - HTTP framework: Hono
-- Frontend: server-rendered HTML from `src/ui.tsx` with Alpine.js state inlined in the page
+- Frontend: server-rendered HTML from `src/ui.tsx` with Arrow-JS (`@arrow-js/core`) state/templates inlined in the page
 - Storage: Cloudflare D1 (`emails` table defined in `schema.sql`)
 - Email ingestion: Cloudflare Email Routing -> Worker `email()` handler
 - Realtime transport: Server-Sent Events (SSE) via `/api/stream`
@@ -22,7 +22,7 @@ The app is intentionally compact and mostly single-worker:
 1. `fetch()` serves the homepage and JSON API routes through Hono.
 2. `email()` receives inbound mail from Cloudflare Email Routing, parses it with `postal-mime`, derives preview text, and stores the message in D1.
 3. `scheduled()` runs periodic retention cleanup using the cron trigger in `wrangler.toml`.
-4. `src/ui.tsx` renders the full UI and contains the Alpine.js client logic for inbox activation, polling-by-SSE, and email detail display.
+4. `src/ui.tsx` renders the full UI and contains the Arrow-JS client logic for inbox activation, polling-by-SSE, and email detail display.
 
 Treat `MAIL_DOMAIN` as the only valid source of truth for what mailbox domain the app accepts and displays.
 
@@ -89,7 +89,7 @@ The UI is rendered from `src/ui.tsx` and is intentionally single-file.
 - Inbox list: hidden until activation; shows sender, subject, timestamp, preview
 - Email detail modal: opens selected message and chooses HTML iframe or plain-text `<pre>`
 
-Alpine state currently owns:
+Arrow-JS state currently owns:
 
 - `localPart`, `activeMailbox`, `showInbox`
 - `emails`, `selected`, `modalOpen`

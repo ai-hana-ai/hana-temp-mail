@@ -202,9 +202,10 @@ describe('worker helpers', () => {
 
     expect(html).toContain('<!DOCTYPE html>');
     expect(html).toContain('@mail.example');
-    expect(html).toContain('mailApp()');
+    expect(html).toContain("import { html, reactive, watch } from 'https://esm.sh/@arrow-js/core';");
+    expect(html).toContain('const state = reactive({');
     expect(html).toContain('Your inbox is empty');
-    expect(html).toContain('<template x-if="isInboxLoading">');
+    expect(html).toContain('email-item email-skeleton');
     expect(html).toContain("replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')");
   });
 

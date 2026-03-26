@@ -3,7 +3,7 @@
 A temporary email inbox app built on **Cloudflare Workers** with:
 
 - **Hono** (routing/API)
-- **Alpine.js** (frontend state)
+- **Arrow-JS (`@arrow-js/core`)** via `esm.sh` (frontend reactivity and templating)
 - **Cloudflare D1** (email storage)
 - **Cloudflare Email Routing** (inbound email capture)
 - **SSE** (real-time inbox updates)
@@ -20,6 +20,7 @@ All inboxes are public and unauthenticated by design. Anyone who knows a mailbox
 - Email detail modal with sanitized HTML rendering (iframe) and text fallback
 - Metadata-only inbox list responses with precomputed previews
 - Automatic retention metadata plus scheduled cleanup support
+- CSP-friendly client runtime with no `unsafe-eval` requirement
 
 ---
 
@@ -166,3 +167,10 @@ pnpm wrangler tail
 
 ### HTML email not displayed as expected
 - Some providers send text-only bodies; app falls back to plain text automatically.
+
+## Frontend Notes
+
+- The homepage HTML is server-rendered by Hono from `src/ui.tsx`.
+- Client-side interactivity is mounted with Arrow-JS templates and `reactive()` state.
+- The page imports Arrow-JS from `https://esm.sh/@arrow-js/core`.
+- The main page CSP allows inline modules plus `esm.sh`, but does not require `unsafe-eval`.

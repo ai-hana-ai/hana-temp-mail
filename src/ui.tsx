@@ -1220,8 +1220,8 @@ export function HomePage({ mailDomain, passkeyEnabled = false }: HomePageProps) 
         <style dangerouslySetInnerHTML={{ __html: css }} />
       </head>
       <body>
-        <div id=\"app\" data-cloak data-mail-domain={`@${mailDomain}`}></div>
-        <script type=\"module\" dangerouslySetInnerHTML={{ __html: appScript }} />
+        <div id="app" data-cloak data-mail-domain={`@${mailDomain}`}></div>
+        <script type="module" dangerouslySetInnerHTML={{ __html: appScript }} />
       </body>
     </html>
   );

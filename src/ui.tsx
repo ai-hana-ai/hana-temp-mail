@@ -50,6 +50,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       skeletonItems: [1, 2, 3],
       inboxLoadSeq: 0,
       emailLoadSeq: 0,
+      htmlRenderSeq: 0,
       
       // Auth State
       auth: {
@@ -227,16 +228,32 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       });
     };
 
+    const resetSelectedEmail = () => {
+      state.emailLoadSeq += 1;
+      state.selected = null;
+      state.selectedId = null;
+      state.selectedIsHtml = false;
+      state.selectedPlainText = '';
+      state.isEmailLoading = false;
+      state.modalOpen = false;
+      clearRenderedHtml();
+    };
+
     const scheduleHtmlRender = () => {
+      state.htmlRenderSeq += 1;
+      const renderSeq = state.htmlRenderSeq;
       if (!state.selectedIsHtml || !state.selected) {
         clearRenderedHtml();
         return;
       }
 
-      const frameId = state.isDesktopLayout ? 'email-html-frame-desktop' : 'email-html-frame-mobile';
+      const selectedId = state.selected.id;
       const emailHtml = state.selected.body_html || '';
       clearRenderedHtml();
       setTimeout(() => {
+        if (renderSeq !== state.htmlRenderSeq) return;
+        if (!state.selectedIsHtml || !state.selected || state.selected.id !== selectedId) return;
+        const frameId = state.isDesktopLayout ? 'email-html-frame-desktop' : 'email-html-frame-mobile';
         renderSelectedHtml(frameId, emailHtml);
       }, 0);
     };
@@ -369,12 +386,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
         if (state.selectedId) {
           const matchingEmail = state.emails.find((email) => email.id === state.selectedId);
           if (!matchingEmail) {
-            state.selected = null;
-            state.selectedId = null;
-            state.selectedIsHtml = false;
-            state.selectedPlainText = '';
-            clearRenderedHtml();
-            state.modalOpen = false;
+            resetSelectedEmail();
           }
         }
         await waitForPaint();
@@ -396,24 +408,27 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       state.eventSource = null;
     };
 
-    const connectSSE = () => {
-      if (!state.activeMailbox) return;
+    const connectSSE = (mailbox) => {
+      if (!mailbox) return;
       if (state.auth.enabled && !state.auth.authenticated) return;
       closeSSE();
 
-      const eventSource = new EventSource('/api/stream?to=' + encodeURIComponent(state.activeMailbox));
+      const eventSource = new EventSource('/api/stream?to=' + encodeURIComponent(mailbox));
       state.eventSource = eventSource;
 
       eventSource.addEventListener('ready', () => {
-        state.status = 'Monitoring: ' + state.activeMailbox + ' (real-time active)';
+        if (state.eventSource !== eventSource || state.activeMailbox !== mailbox) return;
+        state.status = 'Monitoring: ' + mailbox + ' (real-time active)';
       });
 
       eventSource.addEventListener('update', () => {
-        loadEmails({ preserveExisting: true });
+        if (state.eventSource !== eventSource || state.activeMailbox !== mailbox) return;
+        loadEmails({ mailbox, preserveExisting: true });
       });
 
       eventSource.onerror = () => {
-        if (state.eventSource && state.eventSource.readyState === EventSource.CLOSED) {
+        if (state.eventSource !== eventSource) return;
+        if (eventSource.readyState === EventSource.CLOSED) {
           closeSSE();
         }
         state.status = 'Realtime connection interrupted, reconnecting...';
@@ -430,22 +445,19 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       const newMailbox = toMailbox(local);
       const isRefresh = state.showInbox && state.activeMailbox === newMailbox;
 
+      closeSSE();
       state.localPart = local;
       state.activeMailbox = newMailbox;
       state.showInbox = true;
       
       if (!isRefresh) {
-        state.selected = null;
-        state.selectedId = null;
-        state.selectedIsHtml = false;
-        state.selectedPlainText = '';
+        resetSelectedEmail();
         state.emails = [];
-        clearRenderedHtml();
       }
       
       state.status = isRefresh ? 'Refreshing inbox...' : 'Loading inbox...';
       await loadEmails({ mailbox: newMailbox, preserveExisting: isRefresh });
-      connectSSE();
+      connectSSE(newMailbox);
     };
 
     const viewEmail = async (id) => {
@@ -499,57 +511,80 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       }
     );
 
-    const renderInboxBody = () => html\`
-      <div class="inbox-body-content">
-        \${() => state.isInboxLoading && state.emails.length === 0 ? html\`
-          <div class="stack-sm">
-            \${() => state.skeletonItems.map((n) => html\`
-              <div class="email-item email-skeleton" aria-hidden="true">
-                <div class="email-row">
-                  <div class="skeleton-line skeleton-subject"></div>
-                  <div class="skeleton-line skeleton-meta"></div>
-                </div>
-                <div class="skeleton-line skeleton-from"></div>
-                <div class="skeleton-line skeleton-snippet"></div>
-                <div class="skeleton-line skeleton-snippet short"></div>
-              </div>
-            \`.key('email-skeleton-' + n))}
-          </div>
-        \` : ''}
-
-        \${() => !state.isInboxLoading && state.emails.length === 0 ? html\`
-          <div class="empty-state empty-state-compact">
-            <div class="empty-icon">✉️</div>
-            <div class="empty-copy">
-              <h3>Your inbox is empty</h3>
-              <p>No emails have arrived at <b>\${() => state.activeMailbox}</b> yet. Share this address or wait a moment. The inbox refreshes automatically when new messages arrive.</p>
+    const renderInboxSkeleton = () => html\`
+      <div class="stack-sm">
+        \${state.skeletonItems.map((n) => html\`
+          <div class="email-item email-skeleton" aria-hidden="true">
+            <div class="email-row">
+              <div class="skeleton-line skeleton-subject"></div>
+              <div class="skeleton-line skeleton-meta"></div>
             </div>
+            <div class="skeleton-line skeleton-from"></div>
+            <div class="skeleton-line skeleton-snippet"></div>
+            <div class="skeleton-line skeleton-snippet short"></div>
           </div>
-        \` : ''}
+        \`.key('email-skeleton-' + n))}
+      </div>
+    \`;
 
-        \${() => state.emails.length > 0 ? html\`
-          <div class="stack-sm">
-            \${() => state.emails.map((email) => html\`
-              <div
-                class="\${() => {
-                  const classes = ['email-item'];
-                  if (state.selectedId === email.id) classes.push('is-active');
-                  if (state.isEmailLoading && state.selectedId === email.id) classes.push('is-loading');
-                  return classes.join(' ');
-                }}"
-                @click="\${() => viewEmail(email.id)}"
-              >
-                <div class="email-row">
-                  <div class="subject">\${() => email.subject || '(No Subject)'}</div>
-                  <span class="meta">\${() => formatTimestamp(email.timestamp)}</span>
-                </div>
-                <div class="meta">\${() => 'From: ' + email.id_from}</div>
-                <div class="snippet">\${() => previewText(email)}</div>
-              </div>
-            \`.key(email.id))}
+    const renderInboxEmpty = (mailbox) => html\`
+      <div class="empty-state empty-state-compact">
+        <div class="empty-icon">✉️</div>
+        <div class="empty-copy">
+          <h3>Your inbox is empty</h3>
+          <p>No emails have arrived at <b>\${mailbox}</b> yet. Share this address or wait a moment. The inbox refreshes automatically when new messages arrive.</p>
+        </div>
+      </div>
+    \`;
+
+    const renderInboxEmailItem = (email, selectedId, isEmailLoading) => {
+      const classes = ['email-item'];
+      if (selectedId === email.id) classes.push('is-active');
+      if (isEmailLoading && selectedId === email.id) classes.push('is-loading');
+
+      return html\`
+        <div
+          class="\${classes.join(' ')}"
+          @click="\${() => viewEmail(email.id)}"
+        >
+          <div class="email-row">
+            <div class="subject">\${email.subject || '(No Subject)'}</div>
+            <span class="meta">\${formatTimestamp(email.timestamp)}</span>
           </div>
-        \` : ''}
-      </div>\`;
+          <div class="meta">\${'From: ' + email.id_from}</div>
+          <div class="snippet">\${previewText(email)}</div>
+        </div>
+      \`.key(email.id);
+    };
+
+    const renderInboxList = (emails, selectedId, isEmailLoading) => html\`
+      <div class="stack-sm">
+        \${emails.map((email) => renderInboxEmailItem(email, selectedId, isEmailLoading))}
+      </div>
+    \`;
+
+    const renderInboxBody = () => {
+      const activeMailbox = state.activeMailbox;
+      const emails = Array.isArray(state.emails) ? [...state.emails] : [];
+      const isInboxLoading = state.isInboxLoading;
+      const selectedId = state.selectedId;
+      const isEmailLoading = state.isEmailLoading;
+
+      let content = '';
+      if (isInboxLoading && emails.length === 0) {
+        content = renderInboxSkeleton();
+      } else if (emails.length === 0) {
+        content = renderInboxEmpty(activeMailbox);
+      } else {
+        content = renderInboxList(emails, selectedId, isEmailLoading);
+      }
+
+      return html\`
+        <div class="inbox-body-content">
+          \${content}
+        </div>
+      \`.key('inbox-body-' + (activeMailbox || 'closed'));
+    };
 
     const renderDesktopDetail = () => {
       if (!state.showInbox) {
@@ -745,7 +780,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
                     <span>Inbox: <b>\${() => state.activeMailbox}</b></span>
                     <span>\${() => state.emails.length + ' message(s)'}</span>
                   </div>
-                  <div class=\"email-list-body\">\${() => renderInboxBody()}</div>
+                  <div class=\"email-list-body\">\${renderInboxBody}</div>
                 </div>
               \` : ''}
             </aside>

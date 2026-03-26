@@ -373,6 +373,9 @@ describe('worker helpers', () => {
     expect(html).toContain('Your inbox is empty');
     expect(html).toContain('email-item email-skeleton');
     expect(html).toContain("replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')");
+    expect(html).toContain('const resetSelectedEmail = () => {');
+    expect(html).toContain(".key('inbox-body-' + (activeMailbox || 'closed'))");
+    expect(html).toContain('loadEmails({ mailbox, preserveExisting: true });');
   });
 
   it('covers pure helper branches', async () => {

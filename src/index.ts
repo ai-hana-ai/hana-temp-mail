@@ -611,7 +611,7 @@ app.post('/api/auth/login/verify', async (c) => {
 
   const storedCredential = await findCredentialByCredentialId(c.env, payload.response.id);
   if (!storedCredential || storedCredential.user_id !== owner.id) {
-    return jsonError(404, 'credential_not_found', 'Passkey credential was not found.');
+    return jsonError(c, 404, 'credential_not_found', 'Passkey credential was not found.');
   }
 
   const verification = await verifyAuthenticationResponse({

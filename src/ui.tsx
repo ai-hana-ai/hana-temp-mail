@@ -351,16 +351,20 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
     };
 
     const loadEmails = async (options = {}) => {
-      if (!state.activeMailbox) return;
+      const mailbox = typeof options?.mailbox === 'string' && options.mailbox
+        ? options.mailbox
+        : state.activeMailbox;
+
+      if (!mailbox) return;
       if (state.auth.enabled && !state.auth.authenticated) return;
       
       const preserveExisting = Boolean(options && options.preserveExisting);
       const loadSeq = await beginInboxLoad(preserveExisting);
       try {
-        const response = await fetch('/api/emails?to=' + encodeURIComponent(state.activeMailbox));
+        const response = await fetch('/api/emails?to=' + encodeURIComponent(mailbox));
         const data = await response.json();
         if (!response.ok) throw new Error(getErrorMessage(data, 'Failed to load emails.'));
-        if (loadSeq !== state.inboxLoadSeq) return;
+        if (loadSeq !== state.inboxLoadSeq || mailbox !== state.activeMailbox) return;
         state.emails = Array.isArray(data) ? data : [];
         if (state.selectedId) {
           const matchingEmail = state.emails.find((email) => email.id === state.selectedId);
@@ -374,12 +378,13 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
           }
         }
         await waitForPaint();
-        state.status = 'Monitoring: ' + state.activeMailbox + ' (real-time active)';
+        if (mailbox !== state.activeMailbox) return;
+        state.status = 'Monitoring: ' + mailbox + ' (real-time active)';
       } catch (error) {
-        if (loadSeq !== state.inboxLoadSeq) return;
+        if (loadSeq !== state.inboxLoadSeq || mailbox !== state.activeMailbox) return;
         state.status = error instanceof Error ? error.message : 'Failed to load emails.';
       } finally {
-        if (loadSeq === state.inboxLoadSeq) {
+        if (loadSeq === state.inboxLoadSeq && mailbox === state.activeMailbox) {
           state.isInboxLoading = false;
         }
       }
@@ -439,7 +444,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       }
       
       state.status = isRefresh ? 'Refreshing inbox...' : 'Loading inbox...';
-      await loadEmails({ preserveExisting: isRefresh });
+      await loadEmails({ mailbox: newMailbox, preserveExisting: isRefresh });
       connectSSE();
     };
 
@@ -494,9 +499,9 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       }
     );
 
-    const renderInboxBody = () => {
-      if (state.isInboxLoading && state.emails.length === 0) {
-        return html\`
+    const renderInboxBody = () => html\`
+      <div class="inbox-body-content">
+        \${() => state.isInboxLoading && state.emails.length === 0 ? html\`
           <div class="stack-sm">
             \${() => state.skeletonItems.map((n) => html\`
               <div class="email-item email-skeleton" aria-hidden="true">
@@ -509,42 +514,42 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
                 <div class="skeleton-line skeleton-snippet short"></div>
               </div>
             \`.key('email-skeleton-' + n))}
-          </div>\`;
-      }
+          </div>
+        \` : ''}
 
-      if (state.emails.length === 0 && !state.isInboxLoading) {
-        return html\`
+        \${() => !state.isInboxLoading && state.emails.length === 0 ? html\`
           <div class="empty-state empty-state-compact">
             <div class="empty-icon">✉️</div>
             <div class="empty-copy">
               <h3>Your inbox is empty</h3>
               <p>No emails have arrived at <b>\${() => state.activeMailbox}</b> yet. Share this address or wait a moment. The inbox refreshes automatically when new messages arrive.</p>
             </div>
-          </div>\`;
-      }
+          </div>
+        \` : ''}
 
-      return html\`
-        <div class="stack-sm">
-          \${() => state.emails.map((email) => html\`
-            <div
-              class="\${() => {
-                const classes = ['email-item'];
-                if (state.selectedId === email.id) classes.push('is-active');
-                if (state.isEmailLoading && state.selectedId === email.id) classes.push('is-loading');
-                return classes.join(' ');
-              }}"
-              @click="\${() => viewEmail(email.id)}"
-            >
-              <div class="email-row">
-                <div class="subject">\${() => email.subject || '(No Subject)'}</div>
-                <span class="meta">\${() => formatTimestamp(email.timestamp)}</span>
+        \${() => state.emails.length > 0 ? html\`
+          <div class="stack-sm">
+            \${() => state.emails.map((email) => html\`
+              <div
+                class="\${() => {
+                  const classes = ['email-item'];
+                  if (state.selectedId === email.id) classes.push('is-active');
+                  if (state.isEmailLoading && state.selectedId === email.id) classes.push('is-loading');
+                  return classes.join(' ');
+                }}"
+                @click="\${() => viewEmail(email.id)}"
+              >
+                <div class="email-row">
+                  <div class="subject">\${() => email.subject || '(No Subject)'}</div>
+                  <span class="meta">\${() => formatTimestamp(email.timestamp)}</span>
+                </div>
+                <div class="meta">\${() => 'From: ' + email.id_from}</div>
+                <div class="snippet">\${() => previewText(email)}</div>
               </div>
-              <div class="meta">\${() => 'From: ' + email.id_from}</div>
-              <div class="snippet">\${() => previewText(email)}</div>
-            </div>
-          \`.key(email.id))}
-        </div>\`;
-    };
+            \`.key(email.id))}
+          </div>
+        \` : ''}
+      </div>\`;
 
     const renderDesktopDetail = () => {
       if (!state.showInbox) {

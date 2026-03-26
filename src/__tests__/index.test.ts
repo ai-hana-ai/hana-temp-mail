@@ -6,6 +6,7 @@ import worker, {
   buildEmailCursor,
   buildPreview,
   cleanupExpiredEmails,
+  decodeBase64Url,
   decodeHtmlEntities,
   getClientIp,
   getMailDomain,
@@ -406,6 +407,11 @@ describe('worker helpers', () => {
     expect(buildEmailCursor({ id: null, timestamp: '2026-03-25 10:00:00' })).toBe('');
     expect(buildEmailCursor()).toBe('');
 
+    const bytes = new Uint8Array([99, 114, 101, 100, 45, 105, 100]);
+    expect(decodeBase64Url(bytes)).toBe(bytes);
+    expect(Array.from(decodeBase64Url(bytes.buffer))).toEqual(Array.from(bytes));
+    expect(new TextDecoder().decode(decodeBase64Url('Y3JlZC1pZA'))).toBe('cred-id');
+
     expect(await sleep(0)).toBe(true);
 
     const aborted = new AbortController();
@@ -640,8 +646,19 @@ describe('HTTP routes', () => {
     });
 
     const loginOptionsResponse = await request('/api/auth/login/options', env, { method: 'POST' });
-    expect(loginOptionsResponse.status).toBe(500);
-    await expect(loginOptionsResponse.json()).resolves.toMatchObject({ code: 'internal_error' });
+    expect(loginOptionsResponse.status).toBe(200);
+    await expect(loginOptionsResponse.json()).resolves.toMatchObject({
+      options: expect.objectContaining({
+        challenge: expect.any(String),
+        rpId: 'temp-mail.test',
+        allowCredentials: [
+          expect.objectContaining({
+            type: 'public-key',
+            id: 'Y3JlZC1pZA',
+          }),
+        ],
+      }),
+    });
   });
 });
 

@@ -29,8 +29,8 @@ type AuthUserRow = {
 
 type AuthCredentialRow = {
   id: string;
-  credential_id: string;
-  public_key: string;
+  credential_id: string | Uint8Array | ArrayBuffer;
+  public_key: string | Uint8Array | ArrayBuffer;
   counter: number;
   user_id: string;
   transports: string | null;
@@ -235,7 +235,14 @@ export function encodeBase64Url(input: ArrayBuffer | Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-export function decodeBase64Url(value: string): Uint8Array {
+function normalizeBase64UrlValue(value: string | Uint8Array | ArrayBuffer): string {
+  if (typeof value === 'string') return value;
+  return encodeBase64Url(decodeBase64Url(value));
+}
+
+export function decodeBase64Url(value: string | Uint8Array | ArrayBuffer): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
   const binary = atob(padded);
@@ -570,7 +577,7 @@ app.post('/api/auth/register/verify', async (c) => {
   )
     .bind(
       crypto.randomUUID(),
-      credential.id,
+      encodeBase64Url(credential.id),
       encodeBase64Url(credential.publicKey),
       credential.counter,
       owner.id,
@@ -602,7 +609,7 @@ app.post('/api/auth/login/options', async (c) => {
     rpID: getPasskeyRpID(c.env, c.req.url),
     userVerification: 'preferred',
     allowCredentials: credentials.map((credential) => ({
-      id: decodeBase64Url(credential.credential_id),
+      id: normalizeBase64UrlValue(credential.credential_id),
       type: 'public-key',
       transports: readTransportList(credential.transports),
     })),
@@ -634,7 +641,12 @@ app.post('/api/auth/login/verify', async (c) => {
     return jsonError(c, 400, 'challenge_missing', 'Authentication challenge expired.');
   }
 
-  const storedCredential = await findCredentialByCredentialId(c.env, payload.response.id);
+  const storedCredential =
+    (await findCredentialByCredentialId(c.env, payload.response.id)) ||
+    (await listCredentialsByUser(c.env, owner.id)).find(
+      (credential) => normalizeBase64UrlValue(credential.credential_id) === payload.response.id
+    ) ||
+    null;
   if (!storedCredential || storedCredential.user_id !== owner.id) {
     return jsonError(c, 404, 'credential_not_found', 'Passkey credential was not found.');
   }
@@ -646,7 +658,7 @@ app.post('/api/auth/login/verify', async (c) => {
     expectedRPID: getPasskeyRpID(c.env, c.req.url),
     requireUserVerification: false,
     credential: {
-      id: storedCredential.credential_id,
+      id: decodeBase64Url(storedCredential.credential_id),
       publicKey: decodeBase64Url(storedCredential.public_key),
       counter: storedCredential.counter,
       transports: readTransportList(storedCredential.transports),

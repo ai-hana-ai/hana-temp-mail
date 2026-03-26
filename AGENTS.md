@@ -4,11 +4,12 @@ Guidance for coding agents working on this repository.
 
 ## Project Summary
 
-- App type: public temporary inbox service for a single configured mail domain
+- App type: temporary inbox service with optional passkey authentication and multi-domain support
 - Runtime: Cloudflare Workers
 - HTTP framework: Hono
 - Frontend: server-rendered HTML from `src/ui.tsx` with Arrow-JS (`@arrow-js/core`) state/templates inlined in the page
-- Storage: Cloudflare D1 (`emails` table defined in `schema.sql`)
+- Auth: optional WebAuthn/passkey via SimpleWebAuthn (controlled by `ENABLE_PASSKEY` env var)
+- Storage: Cloudflare D1 (`emails` table + `passkey_*` tables defined in `schema.sql`)
 - Email ingestion: Cloudflare Email Routing -> Worker `email()` handler
 - Realtime transport: Server-Sent Events (SSE) via `/api/stream`
 - Main entry: `src/index.ts`
@@ -24,7 +25,9 @@ The app is intentionally compact and mostly single-worker:
 3. `scheduled()` runs periodic retention cleanup using the cron trigger in `wrangler.toml`.
 4. `src/ui.tsx` renders the full UI and contains the Arrow-JS client logic for inbox activation, polling-by-SSE, and email detail display.
 
-Treat `MAIL_DOMAIN` as the only valid source of truth for what mailbox domain the app accepts and displays.
+Treat `MAIL_DOMAINS` (comma-separated) as the source of truth for what mailbox domains the app accepts and displays. The first domain in the list is the primary/default domain. The app supports multiple domains via a dropdown selector in the UI.
+
+When `ENABLE_PASSKEY` is `"true"`, the app requires WebAuthn authentication before granting access to the inbox workspace. The first visitor registers as the owner; subsequent visitors must authenticate. Passkey state is stored in D1.
 
 ## Data Model
 
@@ -48,15 +51,16 @@ Important indexes:
 ## Core Behavior (must preserve)
 
 1. Mailbox input is local-part first; users should not need to type `@domain`.
-2. Mail domain is fixed from `MAIL_DOMAIN`.
-3. Mailbox normalization is shared between frontend and backend and must stay consistent.
-4. UI includes the random mailbox generator button (`🎲`).
-5. Inbox list stays hidden until the user explicitly opens an inbox.
-6. Inbox updates happen in real time through `/api/stream`.
-7. Email details support sanitized HTML rendering in an iframe, with plain-text fallback.
-8. Inbox list responses return metadata and preview text, not full message bodies.
-9. All inboxes are public and unauthenticated by design.
-10. Retention remains best-effort and controlled by `RETENTION_DAYS`.
+2. Mail domains are configured via `MAIL_DOMAINS` (comma-separated). The first is the primary default.
+3. Users can select which domain to use via a dropdown in the UI.
+4. Mailbox normalization is shared between frontend and backend and must stay consistent.
+5. UI includes the random mailbox generator button (`🎲`).
+6. Inbox list stays hidden until the user explicitly opens an inbox.
+7. Inbox updates happen in real time through `/api/stream`.
+8. Email details support sanitized HTML rendering in an iframe, with plain-text fallback.
+9. Inbox list responses return metadata and preview text, not full message bodies.
+10. When `ENABLE_PASSKEY` is enabled, authentication is required before accessing the inbox workspace.
+11. Retention remains best-effort and controlled by `RETENTION_DAYS`.
 
 ## API Endpoints
 
@@ -66,10 +70,10 @@ Keep these routes backward compatible unless the user explicitly requests otherw
   - Returns the HTML UI.
 - `GET /api/mailbox/random`
   - Returns a random mailbox for the configured domain.
-  - Response shape: `{ mailbox, domain }`
+  - Response shape: `{ mailbox, domains }`
 - `GET /api/emails?to=<mailbox>`
   - Returns up to 50 inbox items for the normalized mailbox.
-  - Requires mailbox validation against `MAIL_DOMAIN`.
+  - Requires mailbox validation against `MAIL_DOMAINS`.
   - Response is metadata only: `id`, `id_from`, `subject`, `timestamp`, `preview`
 - `GET /api/email/:id?to=<mailbox>`
   - Returns the stored message only when both `id` and mailbox match.
@@ -84,15 +88,16 @@ Error responses use JSON and currently include `error` plus `code`. Preserve tha
 The UI is rendered from `src/ui.tsx` and is intentionally single-file.
 
 - Hero/header: top-level branding and explanation
-- Mailbox selector: local-part input, fixed domain suffix, random generator, open inbox action
+- Mailbox selector: local-part input, domain dropdown selector, random generator, open inbox action
 - Status area: shows generation/loading/error state
 - Inbox list: hidden until activation; shows sender, subject, timestamp, preview
 - Email detail modal: opens selected message and chooses HTML iframe or plain-text `<pre>`
 
 Arrow-JS state currently owns:
 
-- `localPart`, `activeMailbox`, `showInbox`
+- `localPart`, `selectedDomain`, `availableDomains`, `activeMailbox`, `showInbox`
 - `emails`, `selected`, `modalOpen`
+- `auth` (passkey authentication state)
 - SSE connection lifecycle
 - basic HTML sanitization and iframe `srcdoc` rendering
 
@@ -116,7 +121,7 @@ Do not replace SSE with WebSockets or polling unless explicitly requested.
 - Local-part validation is defined in `src/validation.ts`
 - Allowed local-part characters: lowercase letters, digits, `.`, `_`, `-`
 - Local-part max length is 64
-- Backend still tolerates full mailbox input only when the domain exactly matches `MAIL_DOMAIN`
+- Backend still tolerates full mailbox input only when the domain exactly matches one of `MAIL_DOMAINS`
 - Normalize mailbox values to lowercase before persistence or lookup
 - HTML email rendering must remain sanitized before inserting into iframe `srcdoc`
 - Keep the iframe sandboxed; do not allow scripts
@@ -151,9 +156,10 @@ pnpm wrangler d1 execute <db-name> --file=./migrations/0001_preview_retention.sq
 ## Editing Rules
 
 - Keep API endpoints and response shapes backward compatible unless explicitly requested.
-- Keep `MAIL_DOMAIN` as the single source of truth for accepted mailbox domains.
+- Keep `MAIL_DOMAINS` as the source of truth for accepted mailbox domains.
 - Mirror mailbox validation rules across frontend and backend; do not let them drift.
 - Preserve the hidden-until-open inbox behavior.
+- Preserve passkey authentication flow when `ENABLE_PASSKEY` is enabled.
 - Preserve SSE-based realtime updates and event names unless explicitly requested.
 - Do not remove HTML sanitization, iframe rendering, or plain-text fallback.
 - Keep retention cleanup functional when changing schema or email ingestion logic.
@@ -164,9 +170,10 @@ pnpm wrangler d1 execute <db-name> --file=./migrations/0001_preview_retention.sq
 
 Cloudflare setup is required for the Worker to receive inbound mail.
 
-- `MAIL_DOMAIN` must be configured to the domain you actually control.
+- `MAIL_DOMAINS` must be configured with the domain(s) you actually control (comma-separated).
+- `ENABLE_PASSKEY` set to `"true"` enables WebAuthn authentication (optional).
 - D1 binding `DB` must exist and point to the correct database.
-- Email Routing must be enabled for `MAIL_DOMAIN`.
+- Email Routing must be enabled for each domain in `MAIL_DOMAINS`.
 - Add a catch-all Email Routing rule:
   - Matcher: `all`
   - Action: `Send to Worker`

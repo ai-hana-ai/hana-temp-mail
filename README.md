@@ -7,14 +7,14 @@ A temporary email inbox app built on **Cloudflare Workers** with:
 - **Cloudflare D1** (email storage)
 - **Cloudflare Email Routing** (inbound email capture)
 - **SSE** (real-time inbox updates)
-
-This project is domain-agnostic. You can use your own domain by setting `MAIL_DOMAIN`.
-All inboxes are public and unauthenticated by design. Anyone who knows a mailbox can read that inbox.
+- **Passkey authentication** (optional, via WebAuthn/SimpleWebAuthn)
+- **Multi-domain support** (serve multiple mail domains from a single worker)
 
 ## Features
 
 - Generate random inbox local-part (🎲)
-- Fixed domain from environment variable (`MAIL_DOMAIN`)
+- Multi-domain support with dropdown selector (`MAIL_DOMAINS`)
+- Optional passkey (WebAuthn) authentication to restrict access
 - Inbox appears only after user submits selected local-part
 - Real-time updates via SSE (`/api/stream`)
 - Email detail modal with sanitized HTML rendering (iframe) and text fallback
@@ -62,20 +62,35 @@ pnpm wrangler d1 execute <your-db-name> --file=schema.sql
 
 ## 3) Configure Environment
 
-Set your inbox domain in Cloudflare dashboard vars, `.dev.vars`, or `wrangler.toml`:
+Set your inbox domain(s) in Cloudflare dashboard vars, `.dev.vars`, or `wrangler.toml`:
 
 ```toml
 [vars]
-MAIL_DOMAIN = "example.com"
+MAIL_DOMAINS = "example.com,mail.example.org"
+ENABLE_PASSKEY = "true"
 ```
 
-> The UI only accepts local-part input (e.g. `alice`), and the app appends `@MAIL_DOMAIN` automatically.
+- **`MAIL_DOMAINS`** — comma-separated list of accepted mail domains. The first domain is the primary/default. Users can pick any configured domain from a dropdown in the UI.
+- **`ENABLE_PASSKEY`** — set to `"true"` to require passkey (WebAuthn) authentication before accessing the inbox. When enabled, a passkey owner must be registered first, and all subsequent visitors must authenticate. When disabled or absent, the inbox is fully public.
+
+> The UI only accepts local-part input (e.g. `alice`), and the app appends `@<selected-domain>` automatically.
 > Public API requests are rate-limited on a best-effort basis per client IP.
 
 Optional environment variables:
 
 - `RETENTION_DAYS` defaults to `7`
 - `RATE_LIMIT_WINDOW_MS` defaults to `60000`
+
+### Passkey Authentication (Optional)
+
+When `ENABLE_PASSKEY` is set to `"true"`:
+
+1. The first visitor can **register as the owner** by creating a passkey.
+2. After the owner is registered, all visitors must **authenticate with a passkey** to access the inbox workspace.
+3. Passkey credentials are stored in D1 alongside email data.
+4. Authentication uses the [SimpleWebAuthn](https://simplewebauthn.dev/) library (server + browser).
+
+This is useful when you want to keep your temporary inbox private — only you (the passkey owner) can view incoming emails. Set `ENABLE_PASSKEY` to `"false"` or remove it entirely for a fully public inbox.
 
 ## 4) Run Locally
 
@@ -119,10 +134,15 @@ Also ensure DNS records for your domain are valid:
 
 ## API Endpoints
 
-- `GET /api/mailbox/random`
+- `GET /api/mailbox/random` — returns `{ mailbox, domains }`
 - `GET /api/emails?to=<mailbox>`
 - `GET /api/email/:id?to=<mailbox>`
 - `GET /api/stream?to=<mailbox>`
+- `GET /api/auth/status` — returns passkey auth state (when enabled)
+- `POST /api/auth/register/options` — get WebAuthn registration options
+- `POST /api/auth/register/verify` — verify registration response
+- `POST /api/auth/login/options` — get WebAuthn login options
+- `POST /api/auth/login/verify` — verify login response
 
 `GET /api/emails` returns inbox metadata only: `id`, `id_from`, `subject`, `timestamp`, and `preview`.
 
@@ -130,8 +150,8 @@ Also ensure DNS records for your domain are valid:
 
 ## How It Works
 
-1. User enters local-part (e.g. `support`)
-2. App builds mailbox as `support@MAIL_DOMAIN`
+1. User enters local-part (e.g. `support`) and selects a domain from the dropdown
+2. App builds mailbox as `support@<selected-domain>`
 3. SSE subscribes to that mailbox
 4. Incoming emails are parsed and stored in D1
 5. Inbox updates in real-time
@@ -152,13 +172,13 @@ pnpm wrangler d1 execute <your-db-name> --file=./migrations/0001_preview_retenti
 ## Troubleshooting
 
 ### Emails bounce with "domain does not exist" / "address not found"
-- Verify `MAIL_DOMAIN` is correct
+- Verify `MAIL_DOMAINS` contains your domain(s)
 - Verify Email Routing route is enabled and points to your Worker
 - Verify MX + A/AAAA DNS records are present and propagated
 
 ### UI loads but inbox never receives emails
 - Confirm route action is **Send to Worker** (not forward/drop)
-- Confirm inbound mailbox domain matches `MAIL_DOMAIN`
+- Confirm inbound mailbox domain matches one of the domains in `MAIL_DOMAINS`
 - Check Worker logs with:
 
 ```bash

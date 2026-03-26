@@ -252,14 +252,11 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
     const beginInboxLoad = async (preserveExisting = false) => {
       state.inboxLoadSeq += 1;
       const loadSeq = state.inboxLoadSeq;
-      if (preserveExisting) {
-        state.isInboxLoading = false;
-        return loadSeq;
-      }
-
       state.isInboxLoading = true;
-      state.emails = [];
-      await waitForPaint();
+      if (!preserveExisting) {
+        state.emails = [];
+        await waitForPaint();
+      }
       return loadSeq;
     };
 
@@ -426,21 +423,23 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       }
 
       const newMailbox = toMailbox(local);
-      if (state.showInbox && state.activeMailbox === newMailbox) {
-        return;
-      }
+      const isRefresh = state.showInbox && state.activeMailbox === newMailbox;
 
       state.localPart = local;
       state.activeMailbox = newMailbox;
       state.showInbox = true;
-      state.selected = null;
-      state.selectedId = null;
-      state.selectedIsHtml = false;
-      state.selectedPlainText = '';
-      clearRenderedHtml();
       
-      state.status = 'Loading inbox...';
-      await loadEmails();
+      if (!isRefresh) {
+        state.selected = null;
+        state.selectedId = null;
+        state.selectedIsHtml = false;
+        state.selectedPlainText = '';
+        state.emails = [];
+        clearRenderedHtml();
+      }
+      
+      state.status = isRefresh ? 'Refreshing inbox...' : 'Loading inbox...';
+      await loadEmails({ preserveExisting: isRefresh });
       connectSSE();
     };
 
@@ -496,28 +495,28 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
     );
 
     const renderInboxBody = () => {
-      if (state.isInboxLoading) {
+      if (state.isInboxLoading && state.emails.length === 0) {
         return html\`
-          <div class=\"stack-sm\">
+          <div class="stack-sm">
             \${() => state.skeletonItems.map((n) => html\`
-              <div class=\"email-item email-skeleton\" aria-hidden=\"true\">
-                <div class=\"email-row\">
-                  <div class=\"skeleton-line skeleton-subject\"></div>
-                  <div class=\"skeleton-line skeleton-meta\"></div>
+              <div class="email-item email-skeleton" aria-hidden="true">
+                <div class="email-row">
+                  <div class="skeleton-line skeleton-subject"></div>
+                  <div class="skeleton-line skeleton-meta"></div>
                 </div>
-                <div class=\"skeleton-line skeleton-from\"></div>
-                <div class=\"skeleton-line skeleton-snippet\"></div>
-                <div class=\"skeleton-line skeleton-snippet short\"></div>
+                <div class="skeleton-line skeleton-from"></div>
+                <div class="skeleton-line skeleton-snippet"></div>
+                <div class="skeleton-line skeleton-snippet short"></div>
               </div>
             \`.key('email-skeleton-' + n))}
           </div>\`;
       }
 
-      if (state.emails.length === 0) {
+      if (state.emails.length === 0 && !state.isInboxLoading) {
         return html\`
-          <div class=\"empty-state empty-state-compact\">
-            <div class=\"empty-icon\">✉️</div>
-            <div class=\"empty-copy\">
+          <div class="empty-state empty-state-compact">
+            <div class="empty-icon">✉️</div>
+            <div class="empty-copy">
               <h3>Your inbox is empty</h3>
               <p>No emails have arrived at <b>\${() => state.activeMailbox}</b> yet. Share this address or wait a moment. The inbox refreshes automatically when new messages arrive.</p>
             </div>
@@ -525,23 +524,23 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       }
 
       return html\`
-        <div class=\"stack-sm\">
+        <div class="stack-sm">
           \${() => state.emails.map((email) => html\`
             <div
-              class=\"\${() => {
+              class="\${() => {
                 const classes = ['email-item'];
                 if (state.selectedId === email.id) classes.push('is-active');
                 if (state.isEmailLoading && state.selectedId === email.id) classes.push('is-loading');
                 return classes.join(' ');
-              }}\"
-              @click=\"\${() => viewEmail(email.id)}\"
+              }}"
+              @click="\${() => viewEmail(email.id)}"
             >
-              <div class=\"email-row\">
-                <div class=\"subject\">\${() => email.subject || '(No Subject)'}</div>
-                <span class=\"meta\">\${() => formatTimestamp(email.timestamp)}</span>
+              <div class="email-row">
+                <div class="subject">\${() => email.subject || '(No Subject)'}</div>
+                <span class="meta">\${() => formatTimestamp(email.timestamp)}</span>
               </div>
-              <div class=\"meta\">\${() => 'From: ' + email.id_from}</div>
-              <div class=\"snippet\">\${() => previewText(email)}</div>
+              <div class="meta">\${() => 'From: ' + email.id_from}</div>
+              <div class="snippet">\${() => previewText(email)}</div>
             </div>
           \`.key(email.id))}
         </div>\`;

@@ -39,6 +39,44 @@ type FakeEnv = {
   MAIL_DOMAIN?: string;
   RETENTION_DAYS?: string;
   RATE_LIMIT_WINDOW_MS?: string;
+  ENABLE_PASSKEY?: string;
+  SESSION_TTL_HOURS?: string;
+};
+
+type AuthUser = {
+  id: string;
+  mailbox: string;
+};
+
+type AuthCredential = {
+  id: string;
+  credential_id: string;
+  public_key: string;
+  counter: number;
+  user_id: string;
+  transports: string | null;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+type AuthChallenge = {
+  id: string;
+  user_id: string;
+  mailbox: string;
+  flow: 'registration' | 'authentication';
+  challenge: string;
+  expires_at: string;
+  created_at: string;
+};
+
+type AuthSession = {
+  id: string;
+  user_id: string;
+  mailbox: string;
+  token_hash: string;
+  expires_at: string;
+  created_at: string;
+  last_used_at: string | null;
 };
 
 function toSqliteTimestamp(value: Date): string {
@@ -64,6 +102,14 @@ class FakeStatement {
   }
 
   async all() {
+    if (this.sql.includes('FROM auth_credentials WHERE user_id = ?')) {
+      const [userId] = this.args as [string];
+      const results = this.db.authCredentials
+        .filter((credential) => credential.user_id === userId)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
+      return { results };
+    }
+
     if (this.db.failList) throw new Error('list failed');
 
     const [mailbox, limit] = this.args as [string, number];
@@ -85,6 +131,33 @@ class FakeStatement {
   }
 
   async first<T>() {
+    if (this.sql.includes('SELECT id, mailbox FROM auth_users')) {
+      const [mailbox] = this.args as [string];
+      return (this.db.authUsers.find((user) => user.mailbox === mailbox) ?? null) as T | null;
+    }
+
+    if (this.sql.includes('SELECT id, user_id, flow, challenge FROM auth_challenges')) {
+      const [userId, flow] = this.args as [string, AuthChallenge['flow']];
+      const now = this.db.sqliteNow();
+      const challenge =
+        this.db.authChallenges
+          .filter((entry) => entry.user_id === userId && entry.flow === flow && entry.expires_at > now)
+          .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
+      return challenge as T | null;
+    }
+
+    if (this.sql.includes('SELECT id, credential_id, public_key, counter, user_id, transports FROM auth_credentials WHERE credential_id = ?')) {
+      const [credentialId] = this.args as [string];
+      return (this.db.authCredentials.find((credential) => credential.credential_id === credentialId) ?? null) as T | null;
+    }
+
+    if (this.sql.includes('SELECT id, user_id, expires_at FROM auth_sessions')) {
+      const [tokenHash] = this.args as [string];
+      const now = this.db.sqliteNow();
+      const session = this.db.authSessions.find((entry) => entry.token_hash === tokenHash && entry.expires_at > now) ?? null;
+      return session as T | null;
+    }
+
     if (this.sql.includes('SELECT * FROM emails')) {
       if (this.db.failDetail) throw new Error('detail failed');
       const [id, mailbox] = this.args as [string, string];
@@ -106,6 +179,85 @@ class FakeStatement {
   }
 
   async run() {
+    if (this.sql.startsWith('INSERT INTO auth_users')) {
+      const [id, mailbox] = this.args as [string, string];
+      this.db.authUsers.push({ id, mailbox });
+      return { meta: { changes: 1 } };
+    }
+
+    if (this.sql.startsWith('DELETE FROM auth_challenges WHERE user_id = ? AND flow = ?')) {
+      const [userId, flow] = this.args as [string, AuthChallenge['flow']];
+      const before = this.db.authChallenges.length;
+      this.db.authChallenges = this.db.authChallenges.filter((entry) => !(entry.user_id === userId && entry.flow === flow));
+      return { meta: { changes: before - this.db.authChallenges.length } };
+    }
+
+    if (this.sql.startsWith('INSERT INTO auth_challenges')) {
+      const [id, userId, mailbox, flow, challenge] = this.args as [
+        string,
+        string,
+        string,
+        AuthChallenge['flow'],
+        string,
+      ];
+      const createdAt = toSqliteTimestamp(new Date(this.db.now()));
+      const expiresAt = toSqliteTimestamp(new Date(this.db.now() + 10 * 60 * 1000));
+      this.db.authChallenges.push({ id, user_id: userId, mailbox, flow, challenge, created_at: createdAt, expires_at: expiresAt });
+      return { meta: { changes: 1 } };
+    }
+
+    if (this.sql.startsWith('DELETE FROM auth_challenges WHERE id = ?')) {
+      const [id] = this.args as [string];
+      const before = this.db.authChallenges.length;
+      this.db.authChallenges = this.db.authChallenges.filter((entry) => entry.id !== id);
+      return { meta: { changes: before - this.db.authChallenges.length } };
+    }
+
+    if (this.sql.startsWith('INSERT INTO auth_sessions')) {
+      const [id, userId, mailbox, tokenHash, ttlHoursRaw] = this.args as [string, string, string, string, string];
+      const ttlHours = Number(String(ttlHoursRaw).replace(/[^\d]/g, '')) || 0;
+      const createdAt = toSqliteTimestamp(new Date(this.db.now()));
+      const expiresAt = toSqliteTimestamp(new Date(this.db.now() + ttlHours * 60 * 60 * 1000));
+      this.db.authSessions.push({
+        id,
+        user_id: userId,
+        mailbox,
+        token_hash: tokenHash,
+        expires_at: expiresAt,
+        created_at: createdAt,
+        last_used_at: createdAt,
+      });
+      return { meta: { changes: 1 } };
+    }
+
+    if (this.sql.startsWith('UPDATE auth_sessions SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?')) {
+      const [id] = this.args as [string];
+      const session = this.db.authSessions.find((entry) => entry.id === id);
+      if (session) session.last_used_at = toSqliteTimestamp(new Date(this.db.now()));
+      return { meta: { changes: session ? 1 : 0 } };
+    }
+
+    if (this.sql.startsWith('DELETE FROM auth_sessions WHERE token_hash = ?')) {
+      const [tokenHash] = this.args as [string];
+      const before = this.db.authSessions.length;
+      this.db.authSessions = this.db.authSessions.filter((entry) => entry.token_hash !== tokenHash);
+      return { meta: { changes: before - this.db.authSessions.length } };
+    }
+
+    if (this.sql.startsWith('DELETE FROM auth_challenges WHERE expires_at IS NOT NULL')) {
+      const before = this.db.authChallenges.length;
+      const now = this.db.sqliteNow();
+      this.db.authChallenges = this.db.authChallenges.filter((entry) => !(entry.expires_at <= now));
+      return { meta: { changes: before - this.db.authChallenges.length } };
+    }
+
+    if (this.sql.startsWith('DELETE FROM auth_sessions WHERE expires_at IS NOT NULL')) {
+      const before = this.db.authSessions.length;
+      const now = this.db.sqliteNow();
+      this.db.authSessions = this.db.authSessions.filter((entry) => !(entry.expires_at <= now));
+      return { meta: { changes: before - this.db.authSessions.length } };
+    }
+
     if (this.sql.startsWith('DELETE FROM emails')) {
       if (this.db.failCleanup) throw new Error('cleanup failed');
       const now = this.db.now();
@@ -153,6 +305,10 @@ class FakeStatement {
 
 class FakeD1Database {
   emails: EmailRow[] = [];
+  authUsers: AuthUser[] = [];
+  authCredentials: AuthCredential[] = [];
+  authChallenges: AuthChallenge[] = [];
+  authSessions: AuthSession[] = [];
   failList = false;
   failDetail = false;
   failLatest = false;
@@ -166,6 +322,10 @@ class FakeD1Database {
   now() {
     return Date.now();
   }
+
+  sqliteNow() {
+    return toSqliteTimestamp(new Date(this.now()));
+  }
 }
 
 function makeEnv(overrides: Partial<FakeEnv> = {}): FakeEnv {
@@ -174,6 +334,8 @@ function makeEnv(overrides: Partial<FakeEnv> = {}): FakeEnv {
     MAIL_DOMAIN: overrides.MAIL_DOMAIN ?? 'adopsee.com',
     RETENTION_DAYS: overrides.RETENTION_DAYS,
     RATE_LIMIT_WINDOW_MS: overrides.RATE_LIMIT_WINDOW_MS,
+    ENABLE_PASSKEY: overrides.ENABLE_PASSKEY,
+    SESSION_TTL_HOURS: overrides.SESSION_TTL_HOURS,
   };
 }
 
@@ -440,6 +602,46 @@ describe('HTTP routes', () => {
     expect(snapshot.entries).toEqual([
       expect.objectContaining({ key: 'random:5.5.5.5', count: 1 }),
     ]);
+  });
+
+  it('returns JSON for passkey auth setup and auth middleware failures', async () => {
+    const env = makeEnv({ ENABLE_PASSKEY: 'true', SESSION_TTL_HOURS: '12' });
+
+    const optionsResponse = await request('/api/auth/register/options', env, { method: 'POST' });
+    expect(optionsResponse.status).toBe(200);
+    await expect(optionsResponse.json()).resolves.toMatchObject({
+      options: expect.objectContaining({
+        rp: expect.objectContaining({ name: 'Hana Temp Mail', id: 'temp-mail.test' }),
+        user: expect.objectContaining({ name: 'Owner', displayName: 'App Owner' }),
+      }),
+    });
+    expect(env.DB.authUsers).toEqual([{ id: expect.any(String), mailbox: '__hana_owner__' }]);
+    expect(env.DB.authChallenges).toEqual([
+      expect.objectContaining({
+        mailbox: '__hana_owner__',
+        flow: 'registration',
+        challenge: expect.any(String),
+      }),
+    ]);
+
+    const gatedResponse = await request('/api/emails?to=hana', env);
+    expect(gatedResponse.status).toBe(401);
+    await expect(gatedResponse.json()).resolves.toMatchObject({ code: 'auth_required' });
+
+    env.DB.authCredentials.push({
+      id: 'cred-1',
+      credential_id: 'Y3JlZC1pZA',
+      public_key: 'not-base64url',
+      counter: 0,
+      user_id: env.DB.authUsers[0]!.id,
+      transports: 'not-json',
+      created_at: env.DB.sqliteNow(),
+      last_used_at: null,
+    });
+
+    const loginOptionsResponse = await request('/api/auth/login/options', env, { method: 'POST' });
+    expect(loginOptionsResponse.status).toBe(500);
+    await expect(loginOptionsResponse.json()).resolves.toMatchObject({ code: 'internal_error' });
   });
 });
 

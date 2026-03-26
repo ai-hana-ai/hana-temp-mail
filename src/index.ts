@@ -24,8 +24,7 @@ type Bindings = { Bindings: Env };
 
 type AuthUserRow = {
   id: string;
-  mailbox: string | null;
-  role: 'owner' | 'guest';
+  mailbox: string;
 };
 
 type AuthCredentialRow = {
@@ -61,6 +60,7 @@ const rateLimitState = new Map<string, { count: number; resetAt: number }>();
 let nextRateLimitCleanupAt = 0;
 const SESSION_COOKIE = 'hana_session';
 const textEncoder = new TextEncoder();
+const OWNER_AUTH_MAILBOX = '__hana_owner__';
 
 const RATE_LIMITS = {
   random: 24,
@@ -284,7 +284,9 @@ function serializeCookie(
 }
 
 async function getOwner(env: Env) {
-  return env.DB.prepare("SELECT id, mailbox, role FROM auth_users WHERE role = 'owner'").first<AuthUserRow>();
+  return env.DB.prepare('SELECT id, mailbox FROM auth_users WHERE mailbox = ? LIMIT 1')
+    .bind(OWNER_AUTH_MAILBOX)
+    .first<AuthUserRow>();
 }
 
 async function ensureOwner(env: Env) {
@@ -292,8 +294,8 @@ async function ensureOwner(env: Env) {
   if (existing) return existing;
 
   const id = crypto.randomUUID();
-  await env.DB.prepare("INSERT INTO auth_users (id, mailbox, role) VALUES (?, NULL, 'owner')").bind(id).run();
-  return { id, mailbox: null, role: 'owner' } satisfies AuthUserRow;
+  await env.DB.prepare('INSERT INTO auth_users (id, mailbox) VALUES (?, ?)').bind(id, OWNER_AUTH_MAILBOX).run();
+  return { id, mailbox: OWNER_AUTH_MAILBOX } satisfies AuthUserRow;
 }
 
 async function listCredentialsByUser(env: Env, userId: string) {
@@ -317,14 +319,15 @@ async function findCredentialByCredentialId(env: Env, credentialId: string) {
 async function storeChallenge(
   env: Env,
   userId: string,
+  mailbox: string,
   flow: 'registration' | 'authentication',
   challenge: string
 ) {
   await env.DB.prepare("DELETE FROM auth_challenges WHERE user_id = ? AND flow = ?").bind(userId, flow).run();
   await env.DB.prepare(
-    "INSERT INTO auth_challenges (id, user_id, mailbox, flow, challenge, expires_at) VALUES (?, ?, NULL, ?, ?, datetime('now', '+10 minutes'))"
+    "INSERT INTO auth_challenges (id, user_id, mailbox, flow, challenge, expires_at) VALUES (?, ?, ?, ?, ?, datetime('now', '+10 minutes'))"
   )
-    .bind(crypto.randomUUID(), userId, flow, challenge)
+    .bind(crypto.randomUUID(), userId, mailbox, flow, challenge)
     .run();
 }
 
@@ -340,16 +343,16 @@ async function deleteChallenge(env: Env, challengeId: string) {
   await env.DB.prepare('DELETE FROM auth_challenges WHERE id = ?').bind(challengeId).run();
 }
 
-async function setSessionCookie(c: Context<Bindings>, userId: string) {
+async function setSessionCookie(c: Context<Bindings>, userId: string, mailbox: string) {
   const token = randomBase64Url(32);
   const tokenHash = await sha256Hex(token);
   const ttlHours = getSessionTtlHours(c.env);
   const maxAge = ttlHours * 60 * 60;
 
   await c.env.DB.prepare(
-    "INSERT INTO auth_sessions (id, user_id, mailbox, token_hash, expires_at, last_used_at) VALUES (?, ?, NULL, ?, datetime('now', ?), CURRENT_TIMESTAMP)"
+    "INSERT INTO auth_sessions (id, user_id, mailbox, token_hash, expires_at, last_used_at) VALUES (?, ?, ?, ?, datetime('now', ?), CURRENT_TIMESTAMP)"
   )
-    .bind(crypto.randomUUID(), userId, tokenHash, `+${ttlHours} hours`)
+    .bind(crypto.randomUUID(), userId, mailbox, tokenHash, `+${ttlHours} hours`)
     .run();
 
   c.header(
@@ -437,6 +440,18 @@ export async function cleanupExpiredEmails(env: Env) {
   }
 }
 
+function readTransportList(value: string | null): AuthenticatorTransportFuture[] | undefined {
+  if (!value) return undefined;
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as AuthenticatorTransportFuture[]) : undefined;
+  } catch (error) {
+    console.error('auth.passkey.invalid_transports', { error, value });
+    return undefined;
+  }
+}
+
 app.use('/api/*', async (c, next) => {
   const path = c.req.path;
   const bucket: keyof typeof RATE_LIMITS =
@@ -460,6 +475,16 @@ app.use('/api/*', async (c, next) => {
   }
 
   await next();
+});
+
+app.onError((error, c) => {
+  console.error('request.failed', { path: c.req.path, error });
+
+  if (c.req.path.startsWith('/api/')) {
+    return jsonError(c, 500, 'internal_error', 'Internal server error.');
+  }
+
+  return c.text('Internal Server Error', 500);
 });
 
 app.get('/api/mailbox/random', (c) => {
@@ -498,7 +523,7 @@ app.post('/api/auth/register/options', async (c) => {
     supportedAlgorithmIDs: [-7, -257],
   });
 
-  await storeChallenge(c.env, owner.id, 'registration', options.challenge);
+  await storeChallenge(c.env, owner.id, owner.mailbox, 'registration', options.challenge);
   return c.json({ options });
 });
 
@@ -554,7 +579,7 @@ app.post('/api/auth/register/verify', async (c) => {
     .run();
 
   await deleteChallenge(c.env, challenge.id);
-  await setSessionCookie(c, owner.id);
+  await setSessionCookie(c, owner.id, owner.mailbox);
   return c.json({ ok: true, authenticated: true });
 });
 
@@ -579,11 +604,11 @@ app.post('/api/auth/login/options', async (c) => {
     allowCredentials: credentials.map((credential) => ({
       id: decodeBase64Url(credential.credential_id),
       type: 'public-key',
-      transports: JSON.parse(credential.transports || '[]'),
+      transports: readTransportList(credential.transports),
     })),
   });
 
-  await storeChallenge(c.env, owner.id, 'authentication', options.challenge);
+  await storeChallenge(c.env, owner.id, owner.mailbox, 'authentication', options.challenge);
   return c.json({ options });
 });
 
@@ -624,7 +649,7 @@ app.post('/api/auth/login/verify', async (c) => {
       id: storedCredential.credential_id,
       publicKey: decodeBase64Url(storedCredential.public_key),
       counter: storedCredential.counter,
-      transports: JSON.parse(storedCredential.transports || '[]'),
+      transports: readTransportList(storedCredential.transports),
     },
   }).catch((error) => {
     console.error('auth.passkey.login_verify_failed', { error });
@@ -639,7 +664,7 @@ app.post('/api/auth/login/verify', async (c) => {
     .bind(verification.authenticationInfo.newCounter, storedCredential.id)
     .run();
   await deleteChallenge(c.env, challenge.id);
-  await setSessionCookie(c, owner.id);
+  await setSessionCookie(c, owner.id, owner.mailbox);
   return c.json({ ok: true, authenticated: true });
 });
 

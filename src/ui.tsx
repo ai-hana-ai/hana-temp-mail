@@ -66,20 +66,6 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
 
-    const syncLocalPart = (value) => {
-      const nextLocalPart = String(value || '').toLowerCase();
-      state.localPart = nextLocalPart;
-      return nextLocalPart;
-    };
-
-    const getMailboxInputValue = () => {
-      const input = document.getElementById('mailbox-local-part-input');
-      if (input instanceof HTMLInputElement) {
-        return syncLocalPart(input.value);
-      }
-      return state.localPart;
-    };
-
     const normalizeLocalPart = (value) => {
       const normalized = (value || '').trim().toLowerCase();
       if (!normalized) return null;
@@ -287,7 +273,6 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       state.isInboxLoading = true;
       if (!preserveExisting) {
         state.emails = [];
-        
       }
       return loadSeq;
     };
@@ -389,18 +374,16 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
 
       if (!mailbox) return;
       if (state.auth.enabled && !state.auth.authenticated) return;
-      
-      const previousMailbox = typeof options?.previousMailbox === 'string' ? options.previousMailbox : state.activeMailbox;
-      const resetForMailboxChange = Boolean(options?.resetForMailboxChange) || (Boolean(previousMailbox) && previousMailbox !== mailbox);
-      const preserveExisting = !resetForMailboxChange && Boolean(options && options.preserveExisting);
 
-      if (resetForMailboxChange) {
+      const preserveExisting = Boolean(options?.preserveExisting);
+      if (!preserveExisting) {
         resetSelectedEmail();
         state.emails = [];
       }
 
       const loadSeq = await beginInboxLoad(preserveExisting);
       try {
+        state.status = 'Fetching messages for ' + mailbox + '...';
         const response = await fetch('/api/emails?to=' + encodeURIComponent(mailbox));
         const data = await response.json();
         if (!response.ok) throw new Error(getErrorMessage(data, 'Failed to load emails.'));
@@ -459,30 +442,43 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
     };
 
     const activateInbox = async () => {
-      const rawLocalPart = getMailboxInputValue();
-      const local = normalizeLocalPart(rawLocalPart);
-      if (!local) {
-        alert('Please input email name only (without @), e.g. john.doe');
-        return;
+      try {
+        const local = normalizeLocalPart(state.localPart);
+        if (!local) {
+          state.status = 'Enter an email name without @ before opening the inbox.';
+          alert('Please input email name only (without @), e.g. john.doe');
+          return;
+        }
+
+        const newMailbox = toMailbox(local);
+        const isRefresh = state.showInbox && state.activeMailbox === newMailbox;
+
+        state.localPart = local;
+        state.status = isRefresh
+          ? 'Refreshing ' + newMailbox + '...'
+          : 'Connecting to ' + newMailbox + '...';
+
+        closeSSE();
+        if (!isRefresh) {
+          resetSelectedEmail();
+          state.emails = [];
+        }
+
+        state.activeMailbox = newMailbox;
+        state.showInbox = true;
+
+        await loadEmails({
+          mailbox: newMailbox,
+          preserveExisting: isRefresh,
+        });
+
+        state.status = 'Opening realtime stream for ' + newMailbox + '...';
+        connectSSE(newMailbox);
+      } catch (error) {
+        closeSSE();
+        state.status = error instanceof Error ? error.message : 'Failed to open inbox.';
+        console.error('activateInbox failed', error);
       }
-
-      const newMailbox = toMailbox(local);
-      const previousMailbox = state.activeMailbox;
-      const isRefresh = state.showInbox && previousMailbox === newMailbox;
-
-      closeSSE();
-      state.localPart = local;
-      state.activeMailbox = newMailbox;
-      state.showInbox = true;
-
-      state.status = isRefresh ? 'Refreshing inbox...' : 'Loading inbox...';
-      loadEmails({
-        mailbox: newMailbox,
-        preserveExisting: isRefresh,
-        previousMailbox,
-        resetForMailboxChange: !isRefresh,
-      });
-      connectSSE(newMailbox);
     };
 
     const viewEmail = async (id) => {
@@ -782,21 +778,17 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
                       type=\"text\"
                       placeholder=\"email name\"
                       .value=\"\${() => state.localPart}\"
-                      @input=\"\${(event) => {
-                        syncLocalPart(event.target?.value);
-                      }}\"
-                      @change=\"\${(event) => {
-                        syncLocalPart(event.target?.value);
-                      }}\"
+                      @input=\"\${(e) => state.localPart = e.target.value}\"
                     />
                     <div class=\"domain-select-wrap\">
                       <span class=\"domain-at\">@</span>
                       <select 
                         class=\"domain-select\"
-                        @change=\"\${(e) => { state.selectedDomain = e.target.value; }}\"
+                        .value=\"\${() => state.selectedDomain}\"
+                        @change=\"\${(e) => state.selectedDomain = e.target.value}\"
                       >
                         \${() => state.availableDomains.map((d) => html\`
-                          <option value="\${d}" .selected="\${d === state.selectedDomain}">\${d}</option>
+                          <option value="\${d}">\${d}</option>
                         \`)}
                       </select>
                     </div>

@@ -374,14 +374,14 @@ describe('worker helpers', () => {
     expect(html).toContain('email-item email-skeleton');
     expect(html).toContain("replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')");
     expect(html).toContain('const resetSelectedEmail = () => {');
-    expect(html).toContain("const getMailboxInputValue = () => {");
-    expect(html).toContain("const input = document.getElementById('mailbox-local-part-input');");
     expect(html).toContain("state.inboxBodyVersion += 1;");
     expect(html).toContain("const inboxBodyKey = 'inbox-body-' + (activeMailbox || 'closed') + '-' + state.inboxBodyVersion;");
     expect(html).toContain('loadEmails({ mailbox, preserveExisting: true });');
-    expect(html).toContain('const resetForMailboxChange = Boolean(options?.resetForMailboxChange) || (Boolean(previousMailbox) && previousMailbox !== mailbox);');
+    expect(html).toContain("state.status = 'Fetching messages for ' + mailbox + '...';");
+    expect(html).toContain("state.status = 'Opening realtime stream for ' + newMailbox + '...';");
     expect(html).toContain('id="mailbox-local-part-input"');
-    expect(html).toContain('syncLocalPart(event.target?.value);');
+    expect(html).toContain('@input="${(e) => state.localPart = e.target.value}"');
+    expect(html).toContain('.value="${() => state.selectedDomain}"');
   });
 
   it('covers pure helper branches', async () => {

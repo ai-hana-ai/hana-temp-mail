@@ -48,10 +48,12 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       eventSource: null,
       diceRolling: false,
       skeletonItems: [1, 2, 3],
+      activateInboxSeq: 0,
       inboxLoadSeq: 0,
       inboxBodyVersion: 0,
       emailLoadSeq: 0,
       htmlRenderSeq: 0,
+      inboxFetchController: null,
       
       // Auth State
       auth: {
@@ -65,6 +67,17 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
     const waitForPaint = () => new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
+
+    const isCurrentInboxRun = (mailbox, activateInboxSeq) => {
+      if (mailbox && state.activeMailbox && mailbox !== state.activeMailbox) return false;
+      if (typeof activateInboxSeq === 'number' && activateInboxSeq !== state.activateInboxSeq) return false;
+      return true;
+    };
+
+    const updateInboxStatus = (message, mailbox, activateInboxSeq) => {
+      if (!isCurrentInboxRun(mailbox, activateInboxSeq)) return;
+      state.status = message;
+    };
 
     const normalizeLocalPart = (value) => {
       const normalized = (value || '').trim().toLowerCase();
@@ -277,6 +290,12 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       return loadSeq;
     };
 
+    const cancelInboxLoad = () => {
+      if (!state.inboxFetchController) return;
+      state.inboxFetchController.abort();
+      state.inboxFetchController = null;
+    };
+
     const generateRandom = async () => {
       if (state.diceRolling) return;
       state.diceRolling = true;
@@ -371,9 +390,15 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       const mailbox = typeof options?.mailbox === 'string' && options.mailbox
         ? options.mailbox
         : state.activeMailbox;
+      const activateInboxSeq = typeof options?.activateInboxSeq === 'number'
+        ? options.activateInboxSeq
+        : state.activateInboxSeq;
 
       if (!mailbox) return;
-      if (state.auth.enabled && !state.auth.authenticated) return;
+      if (state.auth.enabled && !state.auth.authenticated) {
+        updateInboxStatus('Authentication required before loading ' + mailbox + '.', mailbox, activateInboxSeq);
+        return;
+      }
 
       const preserveExisting = Boolean(options?.preserveExisting);
       if (!preserveExisting) {
@@ -381,13 +406,29 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
         state.emails = [];
       }
 
+      cancelInboxLoad();
       const loadSeq = await beginInboxLoad(preserveExisting);
+      const controller = new AbortController();
+      let didTimeout = false;
+      const timeoutId = window.setTimeout(() => {
+        didTimeout = true;
+        controller.abort();
+      }, 12000);
+      state.inboxFetchController = controller;
       try {
-        state.status = 'Fetching messages for ' + mailbox + '...';
-        const response = await fetch('/api/emails?to=' + encodeURIComponent(mailbox));
-        const data = await response.json();
+        updateInboxStatus(
+          preserveExisting
+            ? 'Refreshing messages for ' + mailbox + '...'
+            : 'Loading inbox history for ' + mailbox + '...',
+          mailbox,
+          activateInboxSeq
+        );
+        const response = await fetch('/api/emails?to=' + encodeURIComponent(mailbox), {
+          signal: controller.signal,
+        });
+        const data = await response.json().catch(() => null);
         if (!response.ok) throw new Error(getErrorMessage(data, 'Failed to load emails.'));
-        if (loadSeq !== state.inboxLoadSeq || mailbox !== state.activeMailbox) return;
+        if (loadSeq !== state.inboxLoadSeq || !isCurrentInboxRun(mailbox, activateInboxSeq)) return;
         state.emails = Array.isArray(data) ? data : [];
         if (state.selectedId) {
           const matchingEmail = state.emails.find((email) => email.id === state.selectedId);
@@ -395,14 +436,33 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
             resetSelectedEmail();
           }
         }
-        
-        if (mailbox !== state.activeMailbox) return;
-        state.status = 'Monitoring: ' + mailbox + ' (real-time active)';
+
+        updateInboxStatus(
+          state.emails.length > 0
+            ? 'Inbox ready for ' + mailbox + ' (' + state.emails.length + ' message(s)).'
+            : 'Inbox ready for ' + mailbox + '. Waiting for the first email...',
+          mailbox,
+          activateInboxSeq
+        );
       } catch (error) {
-        if (loadSeq !== state.inboxLoadSeq || mailbox !== state.activeMailbox) return;
-        state.status = error instanceof Error ? error.message : 'Failed to load emails.';
+        if (loadSeq !== state.inboxLoadSeq || !isCurrentInboxRun(mailbox, activateInboxSeq)) return;
+
+        const message = controller.signal.aborted
+          ? (didTimeout
+            ? 'Loading ' + mailbox + ' took too long. Please retry.'
+            : 'Loading ' + mailbox + ' was canceled.')
+          : (error instanceof Error ? error.message : 'Failed to load emails.');
+
+        if (message !== 'Loading ' + mailbox + ' was canceled.') {
+          updateInboxStatus(message, mailbox, activateInboxSeq);
+        }
+        throw error;
       } finally {
-        if (loadSeq === state.inboxLoadSeq && mailbox === state.activeMailbox) {
+        window.clearTimeout(timeoutId);
+        if (state.inboxFetchController === controller) {
+          state.inboxFetchController = null;
+        }
+        if (loadSeq === state.inboxLoadSeq && isCurrentInboxRun(mailbox, activateInboxSeq)) {
           state.isInboxLoading = false;
         }
       }
@@ -414,22 +474,29 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       state.eventSource = null;
     };
 
-    const connectSSE = (mailbox) => {
+    const connectSSE = (mailbox, activateInboxSeq) => {
       if (!mailbox) return;
-      if (state.auth.enabled && !state.auth.authenticated) return;
+      if (state.auth.enabled && !state.auth.authenticated) {
+        updateInboxStatus('Authentication required before realtime monitoring starts.', mailbox, activateInboxSeq);
+        return;
+      }
       closeSSE();
 
       const eventSource = new EventSource('/api/stream?to=' + encodeURIComponent(mailbox));
       state.eventSource = eventSource;
 
       eventSource.addEventListener('ready', () => {
-        if (state.eventSource !== eventSource || state.activeMailbox !== mailbox) return;
-        state.status = 'Monitoring: ' + mailbox + ' (real-time active)';
+        if (state.eventSource !== eventSource || !isCurrentInboxRun(mailbox, activateInboxSeq)) return;
+        updateInboxStatus('Realtime connected for ' + mailbox + '. Monitoring incoming mail...', mailbox, activateInboxSeq);
       });
 
       eventSource.addEventListener('update', () => {
-        if (state.eventSource !== eventSource || state.activeMailbox !== mailbox) return;
-        loadEmails({ mailbox, preserveExisting: true });
+        if (state.eventSource !== eventSource || !isCurrentInboxRun(mailbox, activateInboxSeq)) return;
+        updateInboxStatus('New activity detected for ' + mailbox + '. Syncing inbox...', mailbox, activateInboxSeq);
+        void loadEmails({ mailbox, preserveExisting: true, activateInboxSeq }).catch((error) => {
+          if (!isCurrentInboxRun(mailbox, activateInboxSeq)) return;
+          console.error('loadEmails from realtime update failed', error);
+        });
       });
 
       eventSource.onerror = () => {
@@ -437,7 +504,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
         if (eventSource.readyState === EventSource.CLOSED) {
           closeSSE();
         }
-        state.status = 'Realtime connection interrupted, reconnecting...';
+        updateInboxStatus('Realtime connection interrupted for ' + mailbox + ', reconnecting...', mailbox, activateInboxSeq);
       };
     };
 
@@ -452,13 +519,19 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
 
         const newMailbox = toMailbox(local);
         const isRefresh = state.showInbox && state.activeMailbox === newMailbox;
+        const activateInboxSeq = state.activateInboxSeq + 1;
+        state.activateInboxSeq = activateInboxSeq;
 
         state.localPart = local;
-        state.status = isRefresh
-          ? 'Refreshing ' + newMailbox + '...'
-          : 'Connecting to ' + newMailbox + '...';
-
         closeSSE();
+        cancelInboxLoad();
+        updateInboxStatus(
+          isRefresh
+            ? 'Refreshing workspace for ' + newMailbox + '...'
+            : 'Preparing inbox workspace for ' + newMailbox + '...',
+          undefined,
+          activateInboxSeq
+        );
         if (!isRefresh) {
           resetSelectedEmail();
           state.emails = [];
@@ -466,16 +539,29 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
 
         state.activeMailbox = newMailbox;
         state.showInbox = true;
+        updateInboxStatus(
+          isRefresh
+            ? 'Reusing inbox view for ' + newMailbox + '...'
+            : 'Switching inbox view to ' + newMailbox + '...',
+          newMailbox,
+          activateInboxSeq
+        );
+        await waitForPaint();
 
-        await loadEmails({
+        updateInboxStatus('Opening realtime stream for ' + newMailbox + '...', newMailbox, activateInboxSeq);
+        connectSSE(newMailbox, activateInboxSeq);
+
+        void loadEmails({
           mailbox: newMailbox,
           preserveExisting: isRefresh,
+          activateInboxSeq,
+        }).catch((error) => {
+          if (!isCurrentInboxRun(newMailbox, activateInboxSeq)) return;
+          console.error('activateInbox loadEmails failed', error);
         });
-
-        state.status = 'Opening realtime stream for ' + newMailbox + '...';
-        connectSSE(newMailbox);
       } catch (error) {
         closeSSE();
+        cancelInboxLoad();
         state.status = error instanceof Error ? error.message : 'Failed to open inbox.';
         console.error('activateInbox failed', error);
       }

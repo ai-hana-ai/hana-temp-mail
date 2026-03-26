@@ -376,9 +376,12 @@ describe('worker helpers', () => {
     expect(html).toContain('const resetSelectedEmail = () => {');
     expect(html).toContain("state.inboxBodyVersion += 1;");
     expect(html).toContain("const inboxBodyKey = 'inbox-body-' + (activeMailbox || 'closed') + '-' + state.inboxBodyVersion;");
-    expect(html).toContain('loadEmails({ mailbox, preserveExisting: true });');
-    expect(html).toContain("state.status = 'Fetching messages for ' + mailbox + '...';");
-    expect(html).toContain("state.status = 'Opening realtime stream for ' + newMailbox + '...';");
+    expect(html).toContain("const cancelInboxLoad = () => {");
+    expect(html).toContain('signal: controller.signal');
+    expect(html).toContain("updateInboxStatus('Realtime connected for ' + mailbox + '. Monitoring incoming mail...', mailbox, activateInboxSeq);");
+    expect(html).toContain("void loadEmails({ mailbox, preserveExisting: true, activateInboxSeq }).catch((error) => {");
+    expect(html).toContain("updateInboxStatus('Opening realtime stream for ' + newMailbox + '...', newMailbox, activateInboxSeq);");
+    expect(html).toContain("void loadEmails({");
     expect(html).toContain('id="mailbox-local-part-input"');
     expect(html).toContain('@input="${(e) => state.localPart = e.target.value}"');
     expect(html).toContain('.value="${() => state.selectedDomain}"');

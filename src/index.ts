@@ -56,6 +56,7 @@ type AuthStatus = {
   authenticated: boolean;
 };
 
+// v2 deployment trigger for testing
 const app = new Hono<Bindings>();
 const rateLimitState = new Map<string, { count: number; resetAt: number }>();
 let nextRateLimitCleanupAt = 0;

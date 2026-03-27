@@ -56,7 +56,7 @@ type AuthStatus = {
   authenticated: boolean;
 };
 
-import appBundle from './app.bundle';
+import appBundle from './app.bundle.ts';
 
 const app = new Hono<Bindings>();
 const rateLimitState = new Map<string, { count: number; resetAt: number }>();

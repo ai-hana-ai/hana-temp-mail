@@ -368,28 +368,13 @@ describe('worker helpers', () => {
 
     expect(html).toContain('<!DOCTYPE html>');
     expect(html).toContain('@mail.example');
-    expect(html).toContain("import { html, reactive, watch } from 'https://esm.sh/@arrow-js/core';");
-    expect(html).toContain('const state = reactive({');
-    expect(html).toContain('Your inbox is empty');
-    expect(html).toContain('email-item email-skeleton');
-    expect(html).toContain("replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')");
-    expect(html).toContain('const resetSelectedEmail = () => {');
-    expect(html).toContain("const renderInboxList = () => html`");
-    expect(html).toContain("${() => state.emails.map((email) => renderInboxEmailItem(email))}");
-    expect(html).toContain("if (state.isInboxLoading && state.emails.length === 0) {");
-    expect(html).toContain("return renderInboxEmpty().key('inbox-body-' + (state.activeMailbox || 'closed') + '-empty');");
-    expect(html).toContain("const cancelInboxLoad = () => {");
-    expect(html).toContain('signal: controller.signal');
-    expect(html).toContain("const normalizeMailboxSelection = (value) => {");
-    expect(html).toContain("if (!normalized.includes('@')) {");
-    expect(html).toContain("if (!localPart || !domain || !state.availableDomains.includes(domain)) return null;");
-    expect(html).toContain("updateInboxStatus('Realtime connected for ' + mailbox + '. Monitoring incoming mail...', mailbox, activateInboxSeq);");
-    expect(html).toContain("void loadEmails({ mailbox, preserveExisting: true, activateInboxSeq }).catch((error) => {");
-    expect(html).toContain("updateInboxStatus('Opening realtime stream for ' + newMailbox + '...', newMailbox, activateInboxSeq);");
-    expect(html).toContain("void loadEmails({");
-    expect(html).toContain('id="mailbox-local-part-input"');
-    expect(html).toContain('@input="${(e) => state.localPart = e.target.value}"');
-    expect(html).toContain('.value="${() => state.selectedDomain}"');
+    expect(html).toContain("import { initApp } from '/app.js';");
+    expect(html).toContain('initApp({');
+    expect(html).toContain('mailboxLocalPartRegexSource');
+    expect(html).toContain('data-cloak="true"');
+    expect(html).toContain('Temporary Mail');
+    expect(html).toContain('/app.js');
+    expect(html).toContain('availableMailDomains');
   });
 
   it('covers pure helper branches', async () => {

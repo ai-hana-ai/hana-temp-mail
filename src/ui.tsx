@@ -701,7 +701,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
     \`;
 
     const renderInboxBody = () => html\`
-      <div class=\"inbox-body-content\">\${() => {
+      <div class=\"inbox-body-content\" .key=\"\${() => 'inbox-body-' + (state.activeMailbox || 'closed') + '-' + state.activateInboxSeq}\">\${() => {
         if (state.isInboxLoading && state.emails.length === 0) {
           return renderInboxSkeleton().key('inbox-body-' + (state.activeMailbox || 'closed') + '-skeleton');
         }

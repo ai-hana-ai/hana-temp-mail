@@ -1,137 +1,4 @@
-// src/app.ts
-import { component, html, reactive } from "https://esm.sh/@arrow-js/core";
-import {
-  startAuthentication,
-  startRegistration
-} from "https://esm.sh/@simplewebauthn/browser";
-function createAuthState(enabled) {
-  return {
-    enabled,
-    hasOwner: false,
-    authenticated: !enabled,
-    loading: enabled
-  };
-}
-function readErrorMessage(payload, fallback) {
-  if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") {
-    return payload.error;
-  }
-  return fallback;
-}
-function initApp(config) {
-  const root = document.getElementById("app");
-  if (!root) throw new Error("Missing app root");
-  const availableDomains = config.availableMailDomains.length > 0 ? config.availableMailDomains : [config.mailDomain];
-  const mailboxLocalPartPattern = new RegExp(config.mailboxLocalPartRegexSource);
-  const desktopMediaQuery = window.matchMedia("(min-width: 1024px)");
-  const state = reactive({
-    draftLocalPart: "",
-    selectedDomain: availableDomains[0] || config.mailDomain,
-    availableDomains,
-    status: "Ready.",
-    showInbox: false,
-    activeMailbox: "",
-    activeLocalPart: "",
-    activeDomain: "",
-    emails: [],
-    selectedEmailId: "",
-    selectedEmail: null,
-    selectedEmailHtml: "",
-    isSwitchingMailbox: false,
-    isRefreshingInbox: false,
-    isLoadingEmail: false,
-    diceRolling: false,
-    modalOpen: false,
-    isDesktop: desktopMediaQuery.matches,
-    auth: createAuthState(config.passkeyEnabled)
-  });
-  const runtime = {
-    mailboxSessionId: 0,
-    inboxRequestId: 0,
-    emailRequestId: 0,
-    stream: null,
-    inboxController: null,
-    emailController: null
-  };
-  const setStatus = (message) => {
-    state.status = message;
-  };
-  const normalizeDraftInput = (value) => value.trim().toLowerCase();
-  const isCurrentMailboxSession = (sessionId, mailbox) => sessionId === runtime.mailboxSessionId && state.activeMailbox === mailbox;
-  const abortInboxRequest = () => {
-    if (!runtime.inboxController) return;
-    runtime.inboxController.abort();
-    runtime.inboxController = null;
-  };
-  const abortEmailRequest = () => {
-    if (!runtime.emailController) return;
-    runtime.emailController.abort();
-    runtime.emailController = null;
-  };
-  const closeStream = () => {
-    if (!runtime.stream) return;
-    runtime.stream.close();
-    runtime.stream = null;
-  };
-  const stopMailboxEffects = () => {
-    closeStream();
-    abortInboxRequest();
-    abortEmailRequest();
-  };
-  const resetEmailSelection = () => {
-    state.selectedEmailId = "";
-    state.selectedEmail = null;
-    state.selectedEmailHtml = "";
-    state.isLoadingEmail = false;
-    state.modalOpen = false;
-  };
-  const syncDraftFromMailbox = (parts) => {
-    state.draftLocalPart = parts.local;
-    state.selectedDomain = parts.domain;
-  };
-  const parseMailboxInput = (value, fallbackDomain) => {
-    const normalized = normalizeDraftInput(value);
-    if (!normalized) return null;
-    if (normalized.includes("@")) {
-      const segments = normalized.split("@");
-      if (segments.length !== 2) return null;
-      const [local, domain] = segments;
-      if (!mailboxLocalPartPattern.test(local)) return null;
-      if (!availableDomains.includes(domain)) return null;
-      return {
-        local,
-        domain,
-        mailbox: `${local}@${domain}`
-      };
-    }
-    if (!mailboxLocalPartPattern.test(normalized)) return null;
-    return {
-      local: normalized,
-      domain: fallbackDomain,
-      mailbox: `${normalized}@${fallbackDomain}`
-    };
-  };
-  const sanitizeHtmlEmail = (rawHtml) => {
-    if (!rawHtml) return "";
-    const parser = new DOMParser();
-    const documentNode = parser.parseFromString(rawHtml, "text/html");
-    documentNode.querySelectorAll("script, style, link, meta, base, form").forEach((node) => {
-      node.remove();
-    });
-    documentNode.querySelectorAll("*").forEach((node) => {
-      for (const attr of Array.from(node.attributes)) {
-        const name = attr.name.toLowerCase();
-        const value = attr.value.trim();
-        if (name.startsWith("on")) {
-          node.removeAttribute(attr.name);
-          continue;
-        }
-        if ((name === "src" || name === "href" || name === "xlink:href") && /^javascript:/i.test(value)) {
-          node.removeAttribute(attr.name);
-        }
-      }
-    });
-    return `
+import{html as c,reactive as W}from"https://esm.sh/@arrow-js/core";import{startAuthentication as Q,startRegistration as G}from"https://esm.sh/@simplewebauthn/browser";function K(l){return{enabled:l,hasOwner:!1,authenticated:!l,loading:l}}function p(l,h){return l&&typeof l=="object"&&"error"in l&&typeof l.error=="string"?l.error:h}function ee(l){let h=document.getElementById("app");if(!h)throw new Error("Missing app root");let b=l.availableMailDomains.length>0?l.availableMailDomains:[l.mailDomain],y=new RegExp(l.mailboxLocalPartRegexSource),f=window.matchMedia("(min-width: 1024px)"),e=W({draftLocalPart:"",selectedDomain:b[0]||l.mailDomain,availableDomains:b,status:"Ready.",showInbox:!1,activeMailbox:"",activeLocalPart:"",activeDomain:"",emails:[],selectedEmailId:"",selectedEmail:null,selectedEmailHtml:"",isSwitchingMailbox:!1,isRefreshingInbox:!1,isLoadingEmail:!1,diceRolling:!1,modalOpen:!1,isDesktop:f.matches,auth:K(l.passkeyEnabled)}),s={mailboxSessionId:0,inboxRequestId:0,emailRequestId:0,stream:null,inboxController:null,emailController:null},d=t=>{e.status=t},w=t=>t.trim().toLowerCase(),m=(t,a)=>t===s.mailboxSessionId&&e.activeMailbox===a,x=()=>{s.inboxController&&(s.inboxController.abort(),s.inboxController=null)},E=()=>{s.emailController&&(s.emailController.abort(),s.emailController=null)},$=()=>{s.stream&&(s.stream.close(),s.stream=null)},k=()=>{$(),x(),E()},I=()=>{e.selectedEmailId="",e.selectedEmail=null,e.selectedEmailHtml="",e.isLoadingEmail=!1,e.modalOpen=!1},S=t=>{e.draftLocalPart=t.local,e.selectedDomain=t.domain},M=(t,a)=>{let i=w(t);if(!i)return null;if(i.includes("@")){let r=i.split("@");if(r.length!==2)return null;let[n,o]=r;return!y.test(n)||!b.includes(o)?null:{local:n,domain:o,mailbox:`${n}@${o}`}}return y.test(i)?{local:i,domain:a,mailbox:`${i}@${a}`}:null},P=t=>{if(!t)return"";let i=new DOMParser().parseFromString(t,"text/html");return i.querySelectorAll("script, style, link, meta, base, form").forEach(r=>r.remove()),i.querySelectorAll("*").forEach(r=>{for(let n of Array.from(r.attributes)){let o=n.name.toLowerCase(),u=n.value.trim();if(o.startsWith("on")){r.removeAttribute(n.name);continue}(o==="src"||o==="href"||o==="xlink:href")&&/^javascript:/i.test(u)&&r.removeAttribute(n.name)}}),`
 <!doctype html>
 <html>
   <head>
@@ -141,461 +8,126 @@ function initApp(config) {
       body {
         margin: 0;
         padding: 1rem;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
         line-height: 1.55;
         color: #1f2937;
         background: #ffffff;
         word-break: break-word;
         overflow-wrap: anywhere;
       }
-      img, iframe, table, pre, code, blockquote {
-        max-width: 100%;
-      }
-      pre {
-        white-space: pre-wrap;
-      }
+      img, iframe, table, pre, code, blockquote { max-width: 100%; }
+      pre { white-space: pre-wrap; }
     </style>
   </head>
-  <body>${documentNode.body.innerHTML}</body>
-</html>`.trim();
-  };
-  const syncSelectedEmailWithInbox = () => {
-    if (!state.selectedEmailId) return;
-    const emailStillExists = state.emails.some((email) => email.id === state.selectedEmailId);
-    if (!emailStillExists) resetEmailSelection();
-  };
-  const loadInbox = async (sessionId, mailbox, mode) => {
-    const requestId = ++runtime.inboxRequestId;
-    abortInboxRequest();
-    const controller = new AbortController();
-    runtime.inboxController = controller;
-    if (mode === "replace") {
-      state.isSwitchingMailbox = true;
-      state.isRefreshingInbox = false;
-      state.emails = [];
-      setStatus(`Opening ${mailbox}...`);
-    } else if (!state.isSwitchingMailbox) {
-      state.isRefreshingInbox = true;
-      setStatus(`Refreshing ${mailbox}...`);
-    }
-    try {
-      const response = await fetch(`/api/emails?to=${encodeURIComponent(mailbox)}`, {
-        signal: controller.signal
-      });
-      const payload = await response.json().catch(() => []);
-      if (!response.ok) {
-        throw new Error(readErrorMessage(payload, "Failed to fetch inbox."));
-      }
-      if (!isCurrentMailboxSession(sessionId, mailbox) || requestId !== runtime.inboxRequestId) {
-        return;
-      }
-      state.emails = Array.isArray(payload) ? payload : [];
-      syncSelectedEmailWithInbox();
-      setStatus(
-        state.emails.length > 0 ? `Inbox ready for ${mailbox}.` : `Waiting for emails in ${mailbox}...`
-      );
-    } catch (error) {
-      if (error.name === "AbortError") return;
-      if (!isCurrentMailboxSession(sessionId, mailbox)) return;
-      setStatus(error.message || "Failed to fetch inbox.");
-    } finally {
-      if (requestId === runtime.inboxRequestId) {
-        runtime.inboxController = null;
-      }
-      if (!isCurrentMailboxSession(sessionId, mailbox)) return;
-      if (mode === "replace") {
-        state.isSwitchingMailbox = false;
-      } else {
-        state.isRefreshingInbox = false;
-      }
-    }
-  };
-  const connectMailboxStream = (sessionId, mailbox) => {
-    closeStream();
-    const nextStream = new EventSource(`/api/stream?to=${encodeURIComponent(mailbox)}`);
-    runtime.stream = nextStream;
-    nextStream.addEventListener("ready", () => {
-      if (!isCurrentMailboxSession(sessionId, mailbox)) return;
-      setStatus(`Live updates active for ${mailbox}.`);
-    });
-    nextStream.addEventListener("update", () => {
-      if (!isCurrentMailboxSession(sessionId, mailbox)) return;
-      void loadInbox(sessionId, mailbox, "refresh");
-    });
-    nextStream.onerror = () => {
-      if (!isCurrentMailboxSession(sessionId, mailbox)) return;
-      setStatus(`Live updates reconnecting for ${mailbox}...`);
-    };
-  };
-  const activateMailbox = async (parts) => {
-    runtime.mailboxSessionId += 1;
-    const sessionId = runtime.mailboxSessionId;
-    stopMailboxEffects();
-    syncDraftFromMailbox(parts);
-    resetEmailSelection();
-    state.showInbox = true;
-    state.activeMailbox = parts.mailbox;
-    state.activeLocalPart = parts.local;
-    state.activeDomain = parts.domain;
-    await loadInbox(sessionId, parts.mailbox, "replace");
-    if (!isCurrentMailboxSession(sessionId, parts.mailbox)) return;
-    connectMailboxStream(sessionId, parts.mailbox);
-  };
-  const submitMailbox = async () => {
-    const fallbackDomain = state.selectedDomain || availableDomains[0] || config.mailDomain;
-    const parts = parseMailboxInput(state.draftLocalPart, fallbackDomain);
-    if (!parts) {
-      setStatus("Enter a valid mailbox name.");
-      alert('Use lowercase letters, numbers, ".", "_" or "-".');
-      return;
-    }
-    await activateMailbox(parts);
-  };
-  const generateRandomMailbox = async () => {
-    if (state.diceRolling) return;
-    state.diceRolling = true;
-    try {
-      const domain = state.selectedDomain || availableDomains[0] || config.mailDomain;
-      const response = await fetch(`/api/mailbox/random?domain=${encodeURIComponent(domain)}`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(readErrorMessage(payload, "Failed to generate mailbox."));
-      }
-      const mailbox = typeof payload.mailbox === "string" ? payload.mailbox : "";
-      const parts = parseMailboxInput(mailbox, domain);
-      if (!parts) throw new Error("Received invalid mailbox.");
-      syncDraftFromMailbox(parts);
-      setStatus(`Generated ${parts.mailbox}.`);
-    } catch (error) {
-      setStatus(error.message || "Failed to generate mailbox.");
-    } finally {
-      state.diceRolling = false;
-    }
-  };
-  const openEmail = async (summary) => {
-    if (!state.activeMailbox) return;
-    const mailbox = state.activeMailbox;
-    const sessionId = runtime.mailboxSessionId;
-    const requestId = ++runtime.emailRequestId;
-    abortEmailRequest();
-    const controller = new AbortController();
-    runtime.emailController = controller;
-    state.selectedEmailId = summary.id;
-    state.selectedEmail = null;
-    state.selectedEmailHtml = "";
-    state.isLoadingEmail = true;
-    state.modalOpen = !state.isDesktop;
-    try {
-      const response = await fetch(
-        `/api/email/${encodeURIComponent(summary.id)}?to=${encodeURIComponent(mailbox)}`,
-        { signal: controller.signal }
-      );
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(readErrorMessage(payload, "Failed to load email."));
-      }
-      if (!isCurrentMailboxSession(sessionId, mailbox) || requestId !== runtime.emailRequestId || state.selectedEmailId !== summary.id) {
-        return;
-      }
-      state.selectedEmail = payload;
-      state.selectedEmailHtml = sanitizeHtmlEmail(state.selectedEmail.body_html || "");
-    } catch (error) {
-      if (error.name === "AbortError") return;
-      if (!isCurrentMailboxSession(sessionId, mailbox)) return;
-      state.selectedEmail = null;
-      state.selectedEmailHtml = "";
-      setStatus(error.message || "Failed to load email.");
-      alert("Failed to load email body.");
-    } finally {
-      if (requestId === runtime.emailRequestId) {
-        runtime.emailController = null;
-      }
-      if (isCurrentMailboxSession(sessionId, mailbox) && state.selectedEmailId === summary.id) {
-        state.isLoadingEmail = false;
-      }
-    }
-  };
-  const handleAuth = async (mode) => {
-    state.auth.loading = true;
-    try {
-      const optionsResponse = await fetch(`/api/auth/${mode}/options`, { method: "POST" });
-      const optionsPayload = await optionsResponse.json().catch(() => ({}));
-      if (!optionsResponse.ok) {
-        throw new Error(readErrorMessage(optionsPayload, `${mode} failed.`));
-      }
-      const credential = mode === "register" ? await startRegistration({ optionsJSON: optionsPayload.options }) : await startAuthentication({ optionsJSON: optionsPayload.options });
-      const verifyResponse = await fetch(`/api/auth/${mode}/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response: credential })
-      });
-      const verifyPayload = await verifyResponse.json().catch(() => ({}));
-      if (!verifyResponse.ok) {
-        throw new Error(readErrorMessage(verifyPayload, "Passkey verification failed."));
-      }
-      state.auth.authenticated = true;
-      state.auth.hasOwner = true;
-      setStatus("Passkey verified.");
-      await generateRandomMailbox();
-    } catch (error) {
-      alert(error.message || "Authentication failed.");
-    } finally {
-      state.auth.loading = false;
-    }
-  };
-  const checkAuth = async () => {
-    if (!state.auth.enabled) {
-      state.auth.loading = false;
-      return;
-    }
-    state.auth.loading = true;
-    try {
-      const response = await fetch("/api/auth/status");
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(readErrorMessage(payload, "Failed to load auth status."));
-      }
-      state.auth.hasOwner = Boolean(payload.hasOwner);
-      state.auth.authenticated = Boolean(payload.authenticated);
-      if (state.auth.authenticated) {
-        setStatus("Passkey session active.");
-        await generateRandomMailbox();
-      }
-    } catch {
-      setStatus("Failed to verify passkey session.");
-    } finally {
-      state.auth.loading = false;
-    }
-  };
-  const formatTime = (timestamp) => {
-    const date = new Date(timestamp);
-    if (Number.isNaN(date.getTime())) return "";
-    return date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-  };
-  const InboxItem = component((props) => html`
+  <body>${i.body.innerHTML}</body>
+</html>`.trim()},R=async(t,a,i)=>{let r=++s.inboxRequestId;x();let n=new AbortController;s.inboxController=n,i==="replace"?(e.isSwitchingMailbox=!0,e.isRefreshingInbox=!1,e.emails=[],d(`Opening ${a}...`)):e.isSwitchingMailbox||(e.isRefreshingInbox=!0,d(`Refreshing ${a}...`));try{let o=await fetch(`/api/emails?to=${encodeURIComponent(a)}`,{signal:n.signal}),u=await o.json().catch(()=>[]);if(!o.ok)throw new Error(p(u,"Failed to fetch inbox."));if(!m(t,a)||r!==s.inboxRequestId)return;e.emails=Array.isArray(u)?u:[],e.emails.some(J=>J.id===e.selectedEmailId)||I(),d(e.emails.length>0?`Inbox ready for ${a}.`:`Waiting for emails in ${a}...`)}catch(o){if(o.name==="AbortError"||!m(t,a))return;d(o.message||"Failed to fetch inbox.")}finally{if(r===s.inboxRequestId&&(s.inboxController=null),!m(t,a))return;i==="replace"?e.isSwitchingMailbox=!1:e.isRefreshingInbox=!1}},A=(t,a)=>{$();let i=new EventSource(`/api/stream?to=${encodeURIComponent(a)}`);s.stream=i,i.addEventListener("ready",()=>{m(t,a)&&d(`Live updates active for ${a}.`)}),i.addEventListener("update",()=>{m(t,a)&&R(t,a,"refresh")}),i.onerror=()=>{m(t,a)&&d(`Live updates reconnecting for ${a}...`)}},j=async t=>{s.mailboxSessionId+=1;let a=s.mailboxSessionId;k(),S(t),I(),e.showInbox=!0,e.activeMailbox=t.mailbox,e.activeLocalPart=t.local,e.activeDomain=t.domain,await R(a,t.mailbox,"replace"),m(a,t.mailbox)&&A(a,t.mailbox)},L=async()=>{let t=e.selectedDomain||b[0]||l.mailDomain,a=M(e.draftLocalPart,t);if(!a){d("Enter a valid mailbox name."),alert('Use lowercase letters, numbers, ".", "_" or "-".');return}await j(a)},v=async()=>{if(!e.diceRolling){e.diceRolling=!0;try{let t=e.selectedDomain||b[0]||l.mailDomain,a=await fetch(`/api/mailbox/random?domain=${encodeURIComponent(t)}`),i=await a.json().catch(()=>({}));if(!a.ok)throw new Error(p(i,"Failed to generate mailbox."));let r=typeof i.mailbox=="string"?i.mailbox:"",n=M(r,t);if(!n)throw new Error("Received invalid mailbox.");S(n),d(`Generated ${n.mailbox}.`)}catch(t){d(t.message||"Failed to generate mailbox.")}finally{e.diceRolling=!1}}},q=async t=>{if(!e.activeMailbox)return;let a=e.activeMailbox,i=s.mailboxSessionId,r=++s.emailRequestId;E();let n=new AbortController;s.emailController=n,e.selectedEmailId=t.id,e.selectedEmail=null,e.selectedEmailHtml="",e.isLoadingEmail=!0,e.modalOpen=!e.isDesktop;try{let o=await fetch(`/api/email/${encodeURIComponent(t.id)}?to=${encodeURIComponent(a)}`,{signal:n.signal}),u=await o.json().catch(()=>({}));if(!o.ok)throw new Error(p(u,"Failed to load email."));if(!m(i,a)||r!==s.emailRequestId||e.selectedEmailId!==t.id)return;e.selectedEmail=u,e.selectedEmailHtml=P(e.selectedEmail.body_html||"")}catch(o){if(o.name==="AbortError"||!m(i,a))return;e.selectedEmail=null,e.selectedEmailHtml="",d(o.message||"Failed to load email."),alert("Failed to load email body.")}finally{r===s.emailRequestId&&(s.emailController=null),m(i,a)&&e.selectedEmailId===t.id&&(e.isLoadingEmail=!1)}},C=async t=>{e.auth.loading=!0;try{let a=await fetch(`/api/auth/${t}/options`,{method:"POST"}),i=await a.json().catch(()=>({}));if(!a.ok)throw new Error(p(i,`${t} failed.`));let r=t==="register"?await G({optionsJSON:i.options}):await Q({optionsJSON:i.options}),n=await fetch(`/api/auth/${t}/verify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({response:r})}),o=await n.json().catch(()=>({}));if(!n.ok)throw new Error(p(o,"Passkey verification failed."));e.auth.authenticated=!0,e.auth.hasOwner=!0,d("Passkey verified."),await v()}catch(a){alert(a.message||"Authentication failed.")}finally{e.auth.loading=!1}},F=async()=>{if(!e.auth.enabled){e.auth.loading=!1;return}e.auth.loading=!0;try{let t=await fetch("/api/auth/status"),a=await t.json().catch(()=>({}));if(!t.ok)throw new Error(p(a,"Failed to load auth status."));e.auth.hasOwner=!!a.hasOwner,e.auth.authenticated=!!a.authenticated,e.auth.authenticated&&(d("Passkey session active."),await v())}catch{d("Failed to verify passkey session.")}finally{e.auth.loading=!1}},H=t=>{let a=new Date(t);return Number.isNaN(a.getTime())?"":a.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})},N=t=>c`
     <div
-      class="${() => {
-    const isSelected = state.selectedEmailId === props.email.id;
-    const loadingClass = isSelected && state.isLoadingEmail ? " is-loading" : "";
-    return `email-item${isSelected ? " is-active" : ""}${loadingClass}`;
-  }}"
-      @click="${() => openEmail(props.email)}"
+      class="${()=>{let a=e.selectedEmailId===t.id,i=a&&e.isLoadingEmail?" is-loading":"";return`email-item${a?" is-active":""}${i}`}}"
+      @click="${()=>q(t)}"
     >
       <div class="email-row">
-        <div class="subject">${() => props.email.subject || "(No Subject)"}</div>
-        <span class="meta">${() => formatTime(props.email.timestamp)}</span>
+        <div class="subject">${()=>t.subject||"(No Subject)"}</div>
+        <span class="meta">${()=>H(t.timestamp)}</span>
       </div>
-      <div class="meta">${() => `From: ${props.email.id_from}`}</div>
-      <div class="snippet">${() => props.email.preview || "No preview available"}</div>
+      <div class="meta">${()=>`From: ${t.id_from}`}</div>
+      <div class="snippet">${()=>t.preview||"No preview available"}</div>
     </div>
-  `);
-  const skeletonView = () => html`
+  `.key(t.id),T=()=>c`
     <div class="stack-sm">
-      ${[0, 1, 2].map((index) => html`
+      ${[0,1,2].map(t=>c`
         <div class="email-item email-skeleton" aria-hidden="true">
           <div class="skeleton-line skeleton-subject"></div>
           <div class="skeleton-line skeleton-from"></div>
           <div class="skeleton-line skeleton-snippet"></div>
         </div>
-      `.key(`skeleton-${index}`))}
+      `.key(`skeleton-${t}`))}
     </div>
-  `;
-  const emptyInboxView = () => html`
+  `,V=()=>c`
     <div class="empty-state-compact">
-      <p>No emails at <b>${() => state.activeMailbox}</b> yet.</p>
+      <p>No emails at <b>${()=>e.activeMailbox}</b> yet.</p>
     </div>
-  `;
-  const inboxListView = () => {
-    if (state.isSwitchingMailbox) return skeletonView();
-    if (state.emails.length === 0) return emptyInboxView();
-    return html`
+  `,_=()=>e.isSwitchingMailbox?T():e.emails.length===0?V():c`
       <div class="stack-sm">
-        ${() => state.emails.map((email) => InboxItem({ email }).key(email.id))}
+        ${()=>e.emails.map(t=>N(t))}
       </div>
-    `;
-  };
-  const detailEmptyView = (title, description) => html`
+    `,g=(t,a)=>c`
     <div class="detail-empty">
-      <h3>${title}</h3>
-      <p>${description}</p>
+      <h3>${t}</h3>
+      <p>${a}</p>
     </div>
-  `;
-  const emailDetailView = () => {
-    if (!state.showInbox) {
-      return detailEmptyView("Welcome to Hana Mail", "Open a mailbox to start reading messages.");
-    }
-    if (state.isLoadingEmail) {
-      return html`
-        <div class="detail-loading">
-          <div class="skeleton-block"></div>
-        </div>
-      `;
-    }
-    if (!state.selectedEmail) {
-      return detailEmptyView("Select an email", `Mailbox ${state.activeMailbox} is ready.`);
-    }
-    const email = state.selectedEmail;
-    return html`
+  `,D=()=>{if(!e.showInbox)return g("Welcome to Hana Mail","Open a mailbox to start reading messages.");if(e.isLoadingEmail)return c`<div class="detail-loading"><div class="skeleton-block"></div></div>`;if(!e.selectedEmail)return g("Select an email",`Mailbox ${e.activeMailbox} is ready.`);let t=e.selectedEmail;return c`
       <div class="detail-content">
         <div class="detail-head">
-          <h2>${email.subject || "(No Subject)"}</h2>
-          <p class="meta">From: ${email.id_from}</p>
+          <h2>${t.subject||"(No Subject)"}</h2>
+          <p class="meta">From: ${t.id_from}</p>
         </div>
         <hr class="detail-divider" />
-        ${state.selectedEmailHtml ? html`<iframe class="email-html-frame" .srcdoc="${state.selectedEmailHtml}" sandbox="allow-popups"></iframe>` : html`<pre class="text-body">${email.body_text || "No message body."}</pre>`}
+        ${()=>e.selectedEmailHtml?c`<iframe class="email-html-frame" .srcdoc="${e.selectedEmailHtml}" sandbox="allow-popups"></iframe>`:c`<pre class="text-body">${t.body_text||"No message body."}</pre>`}
       </div>
-    `;
-  };
-  const authView = () => {
-    if (state.auth.loading) {
-      return detailEmptyView("Verifying", "Checking passkey access...");
-    }
-    if (!state.auth.hasOwner) {
-      return html`
-        <div class="detail-empty detail-welcome">
-          <div class="empty-icon">🔐</div>
-          <h3>Setup Owner</h3>
-          <p>Register a passkey before accessing inboxes.</p>
-          <button @click="${() => handleAuth("register")}">Create Passkey</button>
-        </div>
-      `;
-    }
-    return html`
+    `},U=()=>e.auth.loading?g("Verifying","Checking passkey access..."):e.auth.hasOwner?c`
       <div class="detail-empty detail-welcome">
         <div class="empty-icon">🔑</div>
         <h3>Owner Required</h3>
         <p>Authenticate with your existing passkey.</p>
-        <button @click="${() => handleAuth("login")}">Login with Passkey</button>
+        <button @click="${()=>C("login")}">Login with Passkey</button>
       </div>
-    `;
-  };
-  const mainView = html`
+    `:c`
+        <div class="detail-empty detail-welcome">
+          <div class="empty-icon">🔐</div>
+          <h3>Setup Owner</h3>
+          <p>Register a passkey before accessing inboxes.</p>
+          <button @click="${()=>C("register")}">Create Passkey</button>
+        </div>
+      `,z=()=>c`
     <div class="hero">
       <div class="hero-badge">Hana Mail</div>
       <h1>Temporary Mail</h1>
       <p class="sub">Open any mailbox instantly and switch inboxes without stale state.</p>
     </div>
-
     <div class="page-main">
       <aside class="sidebar">
         <div class="card">
           <div class="selector">
             <div class="input-wrap multi-domain">
-              <input
-                id="mailbox-local-part-input"
-                type="text"
-                placeholder="name"
-                .value="${() => state.draftLocalPart}"
-                @input="${(event) => {
-    const target = event.target;
-    state.draftLocalPart = normalizeDraftInput(target.value);
-  }}"
-                @keydown="${(event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    void submitMailbox();
-  }}"
+              <input id="mailbox-local-part-input" type="text" placeholder="name"
+                .value="${()=>e.draftLocalPart}"
+                @input="${t=>{let a=t.target;e.draftLocalPart=w(a.value)}}"
+                @keydown="${t=>{t.key==="Enter"&&(t.preventDefault(),L())}}"
               />
               <div class="domain-select-wrap">
                 <span class="domain-at">@</span>
-                <select
-                  class="domain-select"
-                  .value="${() => state.selectedDomain}"
-                  @change="${(event) => {
-    const target = event.target;
-    state.selectedDomain = target.value;
-  }}"
+                <select class="domain-select" .value="${()=>e.selectedDomain}"
+                  @change="${t=>{let a=t.target;e.selectedDomain=a.value}}"
                 >
-                  ${state.availableDomains.map((domain) => html`
-                    <option value="${domain}">${domain}</option>
-                  `.key(domain))}
+                  ${e.availableDomains.map(t=>c`<option value="${t}">${t}</option>`.key(t))}
                 </select>
               </div>
-              <button
-                type="button"
-                class="dice-btn ${() => state.diceRolling ? "is-rolling" : ""}"
-                @click="${() => void generateRandomMailbox()}"
-              >
-                🎲
-              </button>
+              <button type="button" class="dice-btn ${()=>e.diceRolling?"is-rolling":""}" @click="${()=>{v()}}">🎲</button>
             </div>
-
-            <button
-              type="button"
-              style="width:100%"
-              .disabled="${() => state.isSwitchingMailbox}"
-              @click="${() => void submitMailbox()}"
-            >
-              ${() => state.isSwitchingMailbox ? "Opening..." : "Open Inbox"}
+            <button type="button" style="width:100%" ?disabled="${()=>e.isSwitchingMailbox}" @click="${()=>{L()}}">
+              ${()=>e.isSwitchingMailbox?"Opening...":"Open Inbox"}
             </button>
           </div>
-
-          <div class="status">${() => state.status}</div>
+          <div class="status">${()=>e.status}</div>
         </div>
-
-        ${() => state.showInbox ? html`
+        ${()=>e.showInbox?c`
           <div class="email-list-wrap card">
             <div class="inbox-head">
-              <b>${() => state.activeMailbox}</b>
-              <span class="meta">
-                ${() => state.isRefreshingInbox ? "Refreshing..." : `${state.emails.length} messages`}
-              </span>
+              <b>${()=>e.activeMailbox}</b>
+              <span class="meta">${()=>e.isRefreshingInbox?"Refreshing...":`${e.emails.length} messages`}</span>
             </div>
-            <div class="email-list-body">${() => inboxListView()}</div>
+            <div class="email-list-body">${()=>_()}</div>
           </div>
-        ` : ""}
+        `:""}
       </aside>
-
-      <section class="detail-panel">${() => emailDetailView()}</section>
+      <section class="detail-panel">${()=>D()}</section>
     </div>
-
-    <div
-      class="modal ${() => state.modalOpen ? "show" : ""}"
-      @click="${() => {
-    state.modalOpen = false;
-  }}"
-    >
-      <div
-        class="modal-content"
-        @click="${(event) => {
-    event.stopPropagation();
-  }}"
-      >
-        ${() => emailDetailView()}
-        <button
-          type="button"
-          style="width:100%; margin-top: 1rem"
-          @click="${() => {
-    state.modalOpen = false;
-  }}"
-        >
-          Close
-        </button>
+    <div class="modal ${()=>e.modalOpen?"show":""}" @click="${()=>{e.modalOpen=!1}}">
+      <div class="modal-content" @click="${t=>{t.stopPropagation()}}">
+        ${()=>D()}
+        <button type="button" style="width:100%; margin-top: 1rem" @click="${()=>{e.modalOpen=!1}}">Close</button>
       </div>
     </div>
-  `;
-  const appView = html`
-    ${() => state.auth.enabled && !state.auth.authenticated ? authView() : mainView}
-  `;
-  const handleViewportChange = (event) => {
-    state.isDesktop = event ? event.matches : desktopMediaQuery.matches;
-    if (state.isDesktop) state.modalOpen = false;
-  };
-  appView(root);
-  if (typeof desktopMediaQuery.addEventListener === "function") {
-    desktopMediaQuery.addEventListener("change", handleViewportChange);
-  } else {
-    desktopMediaQuery.addListener(handleViewportChange);
-  }
-  window.addEventListener("beforeunload", stopMailboxEffects, { once: true });
-  void checkAuth();
-  if (!state.auth.enabled) {
-    void generateRandomMailbox();
-  }
-}
-export {
-  initApp
-};
+  `,B=c`
+    ${()=>e.auth.enabled&&!e.auth.authenticated?U():z()}
+  `,O=t=>{e.isDesktop=t?t.matches:f.matches,e.isDesktop&&(e.modalOpen=!1)};B(h),typeof f.addEventListener=="function"?f.addEventListener("change",O):f.addListener(O),window.addEventListener("beforeunload",k,{once:!0}),F(),e.auth.enabled||v()}export{ee as initApp};

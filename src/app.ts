@@ -523,7 +523,10 @@ export function initApp(config: any) {
 
     const activateInbox = async () => {
       try {
-        const input = state.localPart || '';
+        const inputEl = document.getElementById('mailbox-local-part-input') as HTMLInputElement;
+        const input = (inputEl?.value || state.localPart || '').trim();
+        state.localPart = input;
+
         const mailboxSelection = normalizeMailboxSelection(input);
         if (!mailboxSelection) {
           state.status = 'Enter an email name or a full mailbox for one of the configured domains.';
@@ -859,8 +862,8 @@ export function initApp(config: any) {
                       id="mailbox-local-part-input"
                       type="text"
                       placeholder="email name"
-                      .value="${() => state.localPart}"
-                      @input="${(e) => { state.localPart = (e.target as HTMLInputElement).value; }}"
+                      value="${state.localPart}"
+                      @input="${(e: any) => { state.localPart = e.target.value; }}"
                     />
                     <div class="domain-select-wrap">
                       <span class="domain-at">@</span>

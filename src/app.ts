@@ -53,8 +53,8 @@ export function initApp(config: any) {
     });
 
     const isCurrentInboxRun = (mailbox, activateInboxSeq) => {
-      if (mailbox && state.activeMailbox && mailbox !== state.activeMailbox) return false;
       if (typeof activateInboxSeq === 'number' && activateInboxSeq !== state.activateInboxSeq) return false;
+      if (mailbox && state.activeMailbox && mailbox !== state.activeMailbox) return false;
       return true;
     };
 

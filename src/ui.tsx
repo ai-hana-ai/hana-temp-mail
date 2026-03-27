@@ -551,8 +551,8 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
         const activateInboxSeq = state.activateInboxSeq + 1;
         state.activateInboxSeq = activateInboxSeq;
 
-        // Only update input field if it wasn't already a full mailbox for this domain
-        if (!input.includes('@')) {
+        // Only update input field if it was a valid mailbox selection and not already full
+        if (!input.includes('@') && localPart) {
           state.localPart = localPart;
         }
         state.selectedDomain = domain;

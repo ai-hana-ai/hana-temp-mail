@@ -639,7 +639,8 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
       </div>
     \`;
 
-    const renderInboxEmailItem = (email) => html\`
+    const renderInboxEmailItem = (email) => {
+      return html\`
         <div
           class="\${() => {
             const classes = ['email-item'];

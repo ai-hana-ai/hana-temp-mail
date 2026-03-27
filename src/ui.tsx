@@ -81,12 +81,41 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
     const normalizeLocalPart = (value) => {
       const normalized = (value || '').trim().toLowerCase();
       if (!normalized) return null;
-      if (normalized.includes('@')) return null;
       if (!mailboxLocalPartPattern.test(normalized)) return null;
       return normalized;
     };
 
-    const toMailbox = (localPart) => localPart + '@' + (state.selectedDomain || defaultMailDomain);
+    const toMailbox = (localPart, domain = state.selectedDomain || defaultMailDomain) => localPart + '@' + domain;
+
+    const normalizeMailboxSelection = (value) => {
+      const normalized = (value || '').trim().toLowerCase();
+      if (!normalized) return null;
+
+      if (!normalized.includes('@')) {
+        const localPart = normalizeLocalPart(normalized);
+        if (!localPart) return null;
+        const domain = state.selectedDomain || defaultMailDomain;
+        return {
+          localPart,
+          domain,
+          mailbox: toMailbox(localPart, domain),
+        };
+      }
+
+      const parts = normalized.split('@');
+      if (parts.length !== 2) return null;
+
+      const [rawLocalPart, rawDomain] = parts;
+      const localPart = normalizeLocalPart(rawLocalPart);
+      const domain = (rawDomain || '').trim().toLowerCase();
+      if (!localPart || !domain || !state.availableDomains.includes(domain)) return null;
+
+      return {
+        localPart,
+        domain,
+        mailbox: toMailbox(localPart, domain),
+      };
+    };
 
     const normalizeSqliteTs = (ts) => {
       if (!ts) return '';
@@ -505,19 +534,20 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
 
     const activateInbox = async () => {
       try {
-        const local = normalizeLocalPart(state.localPart);
-        if (!local) {
-          state.status = 'Enter an email name without @ before opening the inbox.';
-          alert('Please input email name only (without @), e.g. john.doe');
+        const mailboxSelection = normalizeMailboxSelection(state.localPart);
+        if (!mailboxSelection) {
+          state.status = 'Enter an email name or a full mailbox for one of the configured domains.';
+          alert('Please input an email name or full mailbox for a configured domain, e.g. john.doe or john.doe@adopsee.com');
           return;
         }
 
-        const newMailbox = toMailbox(local);
+        const { localPart, domain, mailbox: newMailbox } = mailboxSelection;
         const isRefresh = state.showInbox && state.activeMailbox === newMailbox;
         const activateInboxSeq = state.activateInboxSeq + 1;
         state.activateInboxSeq = activateInboxSeq;
 
-        state.localPart = local;
+        state.localPart = localPart;
+        state.selectedDomain = domain;
         closeSSE();
         cancelInboxLoad();
         updateInboxStatus(

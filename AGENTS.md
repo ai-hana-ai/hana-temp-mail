@@ -182,3 +182,21 @@ Cloudflare setup is required for the Worker to receive inbound mail.
 - The cron trigger in `wrangler.toml` should stay enabled so expired emails are cleaned up.
 
 Without Email Routing and valid DNS, the Worker can serve the UI but will not receive inbound email.
+
+<!-- arrow-js-skill:start -->
+# Arrow
+
+Use the local Arrow references when working on this project:
+
+- `.arrow-js/skill/getting-started.md`
+- `.arrow-js/skill/api.md`
+- `.arrow-js/skill/examples.md`
+
+Prefer idiomatic Arrow patterns:
+- `reactive()` for live state
+- `html` tagged templates for DOM
+- `component()` for reusable view units
+- `routeToPage(url)` in scaffolded SSR apps
+
+Keep no-build core usage simple. If SSR or hydration is involved, preserve payload and boundary behavior.
+<!-- arrow-js-skill:end -->

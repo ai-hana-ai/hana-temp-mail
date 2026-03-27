@@ -380,6 +380,9 @@ describe('worker helpers', () => {
     expect(html).toContain("return renderInboxEmpty().key('inbox-body-' + (state.activeMailbox || 'closed') + '-empty');");
     expect(html).toContain("const cancelInboxLoad = () => {");
     expect(html).toContain('signal: controller.signal');
+    expect(html).toContain("const normalizeMailboxSelection = (value) => {");
+    expect(html).toContain("if (!normalized.includes('@')) {");
+    expect(html).toContain("if (!localPart || !domain || !state.availableDomains.includes(domain)) return null;");
     expect(html).toContain("updateInboxStatus('Realtime connected for ' + mailbox + '. Monitoring incoming mail...', mailbox, activateInboxSeq);");
     expect(html).toContain("void loadEmails({ mailbox, preserveExisting: true, activateInboxSeq }).catch((error) => {");
     expect(html).toContain("updateInboxStatus('Opening realtime stream for ' + newMailbox + '...', newMailbox, activateInboxSeq);");
@@ -394,6 +397,7 @@ describe('worker helpers', () => {
     expect(getMailDomains(makeEnv({ MAIL_DOMAIN: ' Mail.Example ' }))).toEqual(['mail.example']);
 
     expect(normalizeMailbox(' Hana ', ['adopsee.com'])).toBe('hana@adopsee.com');
+    expect(normalizeMailbox(' Hana@Pringgo.Dev ', ['adopsee.com', 'pringgo.dev'])).toBe('hana@pringgo.dev');
     expect(normalizeMailbox(null, ['adopsee.com'])).toBeNull();
 
     expect(getRateLimitWindowMs(makeEnv())).toBe(60_000);

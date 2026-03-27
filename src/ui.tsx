@@ -423,8 +423,12 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
         ? options.activateInboxSeq
         : state.activateInboxSeq;
 
-      if (!mailbox) return;
+      if (!mailbox) {
+        state.isInboxLoading = false;
+        return;
+      }
       if (state.auth.enabled && !state.auth.authenticated) {
+        state.isInboxLoading = false;
         updateInboxStatus('Authentication required before loading ' + mailbox + '.', mailbox, activateInboxSeq);
         return;
       }
@@ -486,7 +490,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
         if (state.inboxFetchController === controller) {
           state.inboxFetchController = null;
         }
-        if (loadSeq === state.inboxLoadSeq && isCurrentInboxRun(mailbox, activateInboxSeq)) {
+        if (loadSeq === state.inboxLoadSeq) {
           state.isInboxLoading = false;
         }
       }

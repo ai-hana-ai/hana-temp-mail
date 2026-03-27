@@ -368,13 +368,13 @@ describe('worker helpers', () => {
 
     expect(html).toContain('<!DOCTYPE html>');
     expect(html).toContain('@mail.example');
-    expect(html).toContain("import { initApp } from '/app.js';");
-    expect(html).toContain('initApp({');
+    expect(html).toContain('<script type="module">');
+    expect(html).toContain("import { reactive } from 'https://esm.sh/@arrow-js/core';");
     expect(html).toContain('mailboxLocalPartRegexSource');
     expect(html).toContain('data-cloak="true"');
     expect(html).toContain('Temporary Mail');
-    expect(html).toContain('/app.js');
-    expect(html).toContain('availableMailDomains');
+    expect(html).toContain('mailDomains');
+    expect(html).not.toContain('/app.js');
   });
 
   it('covers pure helper branches', async () => {

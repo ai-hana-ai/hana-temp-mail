@@ -707,7 +707,21 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
     const renderInboxBody = () => html\`
       <div class=\"inbox-body-content\" .key=\"\${() => 'inbox-body-' + (state.activeMailbox || 'closed') + '-' + state.activateInboxSeq}\">\${() => {
         if (state.isInboxLoading && state.emails.length === 0) {
-          return renderInboxSkeleton().key('inbox-body-' + (state.activeMailbox || 'closed') + '-skeleton');
+          return html\`
+            <div class=\"stack-sm\">
+              \${state.skeletonItems.map((n) => html\`
+                <div class=\"email-item email-skeleton\" aria-hidden=\"true\">
+                  <div class=\"email-row\">
+                    <div class=\"skeleton-line skeleton-subject\"></div>
+                    <div class=\"skeleton-line skeleton-meta\"></div>
+                  </div>
+                  <div class=\"skeleton-line skeleton-from\"></div>
+                  <div class=\"skeleton-line skeleton-snippet\"></div>
+                  <div class=\"skeleton-line skeleton-snippet short\"></div>
+                </div>
+              \`.key('email-skeleton-' + n))}
+            </div>
+          \`;
         }
 
         if (state.emails.length === 0) {
@@ -877,7 +891,7 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
                       type=\"text\"
                       placeholder=\"email name\"
                       .value=\"\${() => state.localPart}\"
-                      @input=\"\${(e) => state.localPart = e.target.value}\"
+                      @input=\"\${(e) => { state.localPart = e.target.value; }}\"
                     />
                     <div class=\"domain-select-wrap\">
                       <span class=\"domain-at\">@</span>

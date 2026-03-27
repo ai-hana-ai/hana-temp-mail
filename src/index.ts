@@ -56,7 +56,8 @@ type AuthStatus = {
   authenticated: boolean;
 };
 
-// v2 deployment trigger for testing
+import appBundle from './app.bundle';
+
 const app = new Hono<Bindings>();
 const rateLimitState = new Map<string, { count: number; resetAt: number }>();
 let nextRateLimitCleanupAt = 0;
@@ -835,6 +836,10 @@ app.get('/api/stream', async (c) => {
       'X-Accel-Buffering': 'no',
     },
   });
+});
+
+app.get('/app.js', (c) => {
+  return c.text(appBundle, 200, { 'Content-Type': 'application/javascript' });
 });
 
 app.get('/', (c) => {

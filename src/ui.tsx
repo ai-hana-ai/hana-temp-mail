@@ -534,7 +534,8 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
 
     const activateInbox = async () => {
       try {
-        const mailboxSelection = normalizeMailboxSelection(state.localPart);
+        const input = state.localPart || '';
+        const mailboxSelection = normalizeMailboxSelection(input);
         if (!mailboxSelection) {
           state.status = 'Enter an email name or a full mailbox for one of the configured domains.';
           alert('Please input an email name or full mailbox for a configured domain, e.g. john.doe or john.doe@adopsee.com');
@@ -546,7 +547,10 @@ export function HomePage({ mailDomain, mailDomains, passkeyEnabled = false }: Ho
         const activateInboxSeq = state.activateInboxSeq + 1;
         state.activateInboxSeq = activateInboxSeq;
 
-        state.localPart = localPart;
+        // Only update input field if it wasn't already a full mailbox for this domain
+        if (!input.includes('@')) {
+          state.localPart = localPart;
+        }
         state.selectedDomain = domain;
         closeSSE();
         cancelInboxLoad();
